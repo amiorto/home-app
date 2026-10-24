@@ -1,0 +1,7 @@
+# OS / editor
+Thumbs.db
+.DS_Store
+.vscode/
+
+# Local Claude settings
+.claude/settings.local.json
