@@ -1,4 +1,5 @@
 import { createStore, localDate } from './store.js';
+import { parseQuick } from './parse.js';
 
 /* ---------------- constants ---------------- */
 
@@ -79,6 +80,8 @@ const ICON_PATHS = {
   check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   chevron: '<path d="m15 18-6-6 6-6"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
+  keyboard: '<rect x="2" y="6" width="20" height="12" rx="2.5"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
 };
 const icon = (name) => `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_PATHS[name]}</svg>`;
 
@@ -185,9 +188,10 @@ function render() {
     <main class="content">${body}</main>
     <nav class="tabbar">
       ${TABS.slice(0, 2).map(tabBtn).join('')}
-      <button class="tab-add" data-action="add" aria-label="הוספה">${icon('plus')}</button>
+      <button class="tab-add" data-action="add" aria-label="הוספה בהקלדה">${icon('plus')}</button>
       ${TABS.slice(2).map(tabBtn).join('')}
-    </nav>`;
+    </nav>
+    <button class="voice-fab" data-action="voice" aria-label="הוספה בהקלטה">${icon('mic')}</button>`;
 }
 
 // A rolling week (the last 7 days), so the bar isn't empty every Sunday morning.
@@ -476,6 +480,7 @@ function openSheet(title, inner) {
 }
 
 function closeSheet() {
+  qa.rec?.abort();
   sheetRoot.classList.remove('open');
   setTimeout(() => { if (!sheetRoot.classList.contains('open')) sheetRoot.innerHTML = ''; }, 250);
 }
@@ -483,12 +488,14 @@ function closeSheet() {
 const chips = (name, options, selected) => `<div class="chips">${options.map(([value, label]) => `
   <label class="chip"><input type="radio" name="${name}" value="${esc(value)}" ${String(value) === String(selected) ? 'checked' : ''}><span>${label}</span></label>`).join('')}</div>`;
 
-function choreSheet(c) {
-  const interval = c?.interval_days ?? 7;
+// `draft` pre-fills a new item (from quick add) without making it an edit.
+function choreSheet(c, draft = null) {
+  const v = c ?? draft ?? {};
+  const interval = v.interval_days ?? 7;
   const preset = INTERVALS.some(([v]) => v === interval) ? interval : 'custom';
   openSheet(c ? 'עריכת מטלה' : 'מטלת בית חדשה', `
     <form data-form="chore" data-id="${c?.id ?? ''}" class="stack">
-      <input name="title" placeholder="למשל: לשטוף רצפה" value="${esc(c?.title)}" required ${c ? '' : 'autofocus'}>
+      <input name="title" placeholder="למשל: לשטוף רצפה" value="${esc(v.title)}" required ${c ? '' : 'autofocus'}>
       <label class="field-label">באיזו תדירות?</label>
       ${chips('preset', [...INTERVALS, ['custom', 'אחר']], preset)}
       <div class="inline">כל <input name="custom_days" type="number" min="1" max="365" inputmode="numeric" value="${interval}" class="num"> ימים <small class="muted">(כשבוחרים "אחר")</small></div>
@@ -522,12 +529,13 @@ function syncTaskForm(form) {
   form.querySelector('.due-block').hidden = isHabit || repeating;
 }
 
-function taskSheet(t, kind = 'task', area = AREAS[0].name, repeat = '0') {
+function taskSheet(t, kind = 'task', area = AREAS[0].name, repeat = '0', draft = null) {
   kind = t?.kind ?? kind;
+  const due = t ? t.due_date ?? '' : draft ? draft.due_date ?? '' : today();
   openSheet(t ? (kind === 'habit' ? 'עריכת הרגל' : 'עריכת משימה') : 'הוספה', `
     <form data-form="task" data-id="${t?.id ?? ''}" class="stack">
       ${t ? `<input type="hidden" name="kind" value="${kind}">` : chips('kind', [['task', '✅ משימה'], ['habit', '🌱 הרגל יומי']], kind)}
-      <input name="title" placeholder="מה צריך לעשות?" value="${esc(t?.title)}" required ${t ? '' : 'autofocus'}>
+      <input name="title" placeholder="מה צריך לעשות?" value="${esc(t?.title ?? draft?.title)}" required ${t ? '' : 'autofocus'}>
       <label class="field-label">תחום</label>
       ${chips('area', AREAS.map((a) => [a.name, `${a.icon} ${a.name}${a.name === HOME_AREA ? ' (משותף)' : ''}`]), t?.area ?? area)}
       ${t ? '' : `<div class="repeat-block">
@@ -540,7 +548,7 @@ function taskSheet(t, kind = 'task', area = AREAS[0].name, repeat = '0') {
           <button type="button" class="chip-btn" data-action="set-date" data-value="${today()}">היום</button>
           <button type="button" class="chip-btn" data-action="set-date" data-value="${addDays(today(), 1)}">מחר</button>
           <button type="button" class="chip-btn" data-action="set-date" data-value="">ללא</button>
-          <input type="date" name="due_date" value="${t?.due_date ?? (t ? '' : today())}">
+          <input type="date" name="due_date" value="${due}">
         </div>
       </div>
       <button class="btn primary" type="submit">${t ? 'שמירה' : 'הוספה'}</button>
@@ -549,17 +557,18 @@ function taskSheet(t, kind = 'task', area = AREAS[0].name, repeat = '0') {
   syncTaskForm(sheetRoot.querySelector('form'));
 }
 
-function expenseSheet(e) {
+function expenseSheet(e, draft = null) {
+  const v = e ?? draft ?? {};
   openSheet(e ? 'עריכת הוצאה' : 'הוצאה משותפת חדשה', `
     <form data-form="expense" data-id="${e?.id ?? ''}" class="stack">
-      <div class="amount-input"><span>₪</span><input name="amount" type="text" inputmode="decimal" placeholder="0" value="${e?.amount ?? ''}" required ${e ? '' : 'autofocus'}></div>
-      <input name="description" placeholder="על מה? למשל: קניות בסופר" value="${esc(e?.description)}" required>
+      <div class="amount-input"><span>₪</span><input name="amount" type="text" inputmode="decimal" placeholder="0" value="${v.amount ?? ''}" required ${e || v.amount ? '' : 'autofocus'}></div>
+      <input name="description" placeholder="על מה? למשל: קניות בסופר" value="${esc(v.description)}" required>
       <label class="field-label">קטגוריה</label>
-      ${chips('category', CATEGORIES.map((c) => [c.name, `${c.icon} ${c.name}`]), e?.category ?? CATEGORIES[0].name)}
+      ${chips('category', CATEGORIES.map((c) => [c.name, `${c.icon} ${c.name}`]), v.category ?? CATEGORIES[0].name)}
       <label class="field-label">מי שילם?</label>
-      ${chips('paid_by', membersMeFirst().map((m) => [m.id, esc(memberName(m.id))]), e?.paid_by ?? me().id)}
+      ${chips('paid_by', membersMeFirst().map((m) => [m.id, esc(memberName(m.id))]), v.paid_by ?? me().id)}
       <label class="field-label">תאריך</label>
-      <input type="date" name="spent_on" value="${e?.spent_on ?? today()}" required>
+      <input type="date" name="spent_on" value="${v.spent_on ?? today()}" required>
       <button class="btn primary" type="submit">${e ? 'שמירה' : 'הוספה'}</button>
       ${e ? `<button class="btn danger" type="button" data-action="delete" data-table="expenses" data-id="${e.id}">מחיקת הוצאה</button>` : ''}
     </form>`);
@@ -588,6 +597,136 @@ function settingsSheet() {
           <button class="btn" data-action="switch-user">החלפת משתמש (${esc(S.ctx.members.find((m) => m.id !== me().id).name)})</button>
           <button class="btn danger" data-action="reset-demo">איפוס נתוני הדגמה</button></div>`
       : `<button class="btn danger" data-action="sign-out">התנתקות</button>`}`);
+}
+
+/* ---------------- quick add (one sentence, typed or spoken) ---------------- */
+
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+const QA_KINDS = [['task', 'משימה'], ['chore', 'מטלה חוזרת'], ['expense', 'הוצאה'], ['habit', 'הרגל']];
+const QA_EXAMPLES = ['הוצאתי 400 שקל על צבע טמבור', 'להשקות עציצים כל יום', 'לקבוע תור לרופא מחר', 'אלה שילמה 120 על פיצה'];
+const qa = { text: '', kind: null, rec: null, mode: 'type' };
+
+// Two separate ways in, sharing the same preview and save:
+//   + (bottom bar)        → typing only, keyboard ready
+//   floating microphone   → voice only, starts listening right away
+function quickAddSheet(text = '') {
+  Object.assign(qa, { text, kind: null, mode: 'type' });
+  openSheet('מה להוסיף?', `
+    <div class="qa">
+      <textarea id="qa-text" rows="2" placeholder="למשל: הוצאתי 400 שקל על צבע" autofocus enterkeyhint="done">${esc(text)}</textarea>
+      <div id="qa-out"></div>
+      <button class="link qa-form" data-action="qa-form">או פתחו טופס מלא</button>
+    </div>`);
+  renderQuickAdd();
+}
+
+function voiceSheet() {
+  if (!SpeechRecognition) {
+    // No in-app speech recognition here (e.g. some iPhone home-screen apps): type, using the keyboard's own mic.
+    quickAddSheet();
+    toast('הקלטה ישירה לא זמינה כאן. לחצו על המיקרופון שבמקלדת והכתיבו');
+    return;
+  }
+  Object.assign(qa, { text: '', kind: null, mode: 'voice' });
+  openSheet('מה לרשום?', `
+    <div class="qa">
+      <button class="qa-voice" data-action="qa-mic" aria-label="הקלטה">
+        <span class="qa-voice-orb">${icon('mic')}</span>
+        <span class="qa-voice-label"><span class="idle">לחצו כדי להקליט שוב</span><span class="busy">מקשיב… דברו עכשיו</span></span>
+      </button>
+      <div id="qa-transcript" class="qa-transcript"></div>
+      <div id="qa-out"></div>
+      <button class="link qa-form" data-action="qa-to-type">להקליד במקום</button>
+    </div>`);
+  renderQuickAdd();
+  toggleMic(sheetRoot.querySelector('.qa-voice'));
+}
+
+function parsedQuick() {
+  return parseQuick(qa.text, { members: S.ctx.members, meId: me().id }, qa.kind);
+}
+
+function renderQuickAdd() {
+  const out = document.getElementById('qa-out');
+  if (!out) return;
+  if (!qa.text.trim()) {
+    out.innerHTML = qa.mode === 'voice'
+      ? `<div class="qa-hint qa-hint-voice">אמרו משפט אחד, למשל:<br>"הוצאתי 400 שקל על צבע טמבור"<br>"להשקות עציצים כל יום"</div>`
+      : `<div class="qa-hint">כתבו משפט אחד (או הכתיבו עם המיקרופון שבמקלדת). למשל:</div>
+         <div class="qa-examples">${QA_EXAMPLES.map((x) => `<button class="tag qa-example" data-action="qa-example" data-text="${esc(x)}">${esc(x)}</button>`).join('')}</div>`;
+    return;
+  }
+  const p = parsedQuick();
+  const AREA_LABEL = (a) => (a === HOME_AREA ? 'בית · משותף' : a);
+  const lines = {
+    expense: [p.amount != null ? money(p.amount) : 'חסר סכום', `${esc(p.description)} · ${esc(p.category)} · ${p.paid_by === me().id ? 'שילמתי' : `${esc(memberName(p.paid_by))} שילם/ה`} · ${p.spent_on === today() ? 'היום' : dueLabel(p.spent_on)}`],
+    task: [esc(p.title || '…'), `${AREA_LABEL(p.area)} · ${p.due_date ? dueLabel(p.due_date) : 'בלי תאריך'}`],
+    chore: [esc(p.title || '…'), `מטלת בית חוזרת · ${INTERVALS.find(([v]) => v === p.interval_days)?.[1] ?? `כל ${daysHe(p.interval_days)}`}`],
+    habit: [esc(p.title || '…'), `הרגל יומי · ${esc(p.area)}`],
+  }[p.kind];
+  const canSave = p.kind === 'expense' ? p.amount != null : !!p.title;
+  out.innerHTML = `
+    <div class="qa-kinds">${QA_KINDS.map(([k, label]) => `<button class="${p.kind === k ? 'on' : ''}" data-action="qa-kind" data-kind="${k}">${label}</button>`).join('')}</div>
+    <div class="qa-preview">
+      <div class="qa-main">${lines[0]}</div>
+      <div class="qa-meta">${lines[1]}</div>
+    </div>
+    <div class="qa-actions">
+      <button class="btn primary" data-action="${canSave ? 'qa-save' : 'qa-edit'}">${canSave ? 'הוספה' : 'להשלמת הפרטים'}</button>
+      <button class="btn" data-action="qa-edit">עריכה</button>
+    </div>`;
+}
+
+async function saveQuick() {
+  const p = parsedQuick();
+  if (p.kind === 'expense') {
+    await forms.expense({ amount: String(p.amount), description: p.description, category: p.category, paid_by: p.paid_by, spent_on: p.spent_on }, null);
+  } else if (p.kind === 'chore') {
+    const preset = INTERVALS.some(([v]) => v === p.interval_days) ? String(p.interval_days) : 'custom';
+    await forms.chore({ title: p.title, preset, custom_days: String(p.interval_days) }, null);
+  } else {
+    await forms.task({ title: p.title, area: p.area, kind: p.kind, due_date: p.due_date ?? '', repeat: '0' }, null);
+  }
+  closeSheet();
+  await refresh();
+  toast({ expense: `נוספה הוצאה ${money(p.amount)}`, chore: 'נוספה מטלת בית חוזרת', task: 'נוספה משימה', habit: 'נוסף הרגל' }[p.kind] + ' ✓');
+}
+
+function editQuick() {
+  const p = parsedQuick();
+  if (p.kind === 'expense') return expenseSheet(null, p);
+  if (p.kind === 'chore') return choreSheet(null, p);
+  return taskSheet(null, p.kind, p.area, '0', p);
+}
+
+// Each recording replaces the previous sentence; the live transcript shows as you speak.
+function toggleMic(btn) {
+  if (qa.rec) { qa.rec.stop(); return; }
+  const shown = document.getElementById('qa-transcript');
+  const rec = new SpeechRecognition();
+  rec.lang = 'he-IL';
+  rec.interimResults = true;
+  rec.onresult = (e) => {
+    qa.text = [...e.results].map((r) => r[0].transcript).join('');
+    qa.kind = null;
+    if (shown) shown.textContent = qa.text;
+    renderQuickAdd();
+  };
+  rec.onerror = (e) => {
+    if (e.error === 'aborted' || e.error === 'no-speech') return;
+    toast(e.error === 'not-allowed' ? 'אין הרשאה למיקרופון. אפשר להקליד במקום' : 'ההקלטה לא הצליחה. אפשר להקליד במקום');
+  };
+  rec.onend = () => { qa.rec = null; btn.classList.remove('rec'); };
+  qa.rec = rec;
+  btn.classList.add('rec');
+  try { rec.start(); } catch { qa.rec = null; btn.classList.remove('rec'); }
+}
+
+// The detailed form for the current tab (what + did before quick add).
+function addForm() {
+  if (S.tab === 'home') return homeAddSheet();
+  if (S.tab === 'expenses') return expenseSheet();
+  return taskSheet(null, S.tab === 'personal' && S.personalView === 'habits' ? 'habit' : 'task');
 }
 
 /* ---------------- toast ---------------- */
@@ -628,10 +767,19 @@ const actions = {
     S.month = localDate(d).slice(0, 7);
     render();
   },
-  add: () => {
-    if (S.tab === 'home') return homeAddSheet();
-    if (S.tab === 'expenses') return expenseSheet();
-    return taskSheet(null, S.tab === 'personal' && S.personalView === 'habits' ? 'habit' : 'task');
+  add: () => quickAddSheet(),
+  'qa-form': () => addForm(),
+  'qa-kind': (el) => { qa.kind = el.dataset.kind; renderQuickAdd(); },
+  'qa-save': () => saveQuick(),
+  'qa-edit': () => editQuick(),
+  voice: () => voiceSheet(),
+  'qa-mic': (el) => toggleMic(el),
+  'qa-to-type': () => { qa.rec?.abort(); quickAddSheet(qa.text); },
+  'qa-example': (el) => {
+    const box = document.getElementById('qa-text');
+    box.value = qa.text = el.dataset.text;
+    qa.kind = null;
+    renderQuickAdd();
   },
   'edit-chore': (el) => choreSheet(find('chores', el.dataset.id)),
   'edit-task': (el) => taskSheet(find('tasks', el.dataset.id)),
@@ -741,6 +889,23 @@ document.addEventListener('click', async (e) => {
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && sheetRoot.classList.contains('open')) closeSheet();
+  // Enter in quick add = the primary button (save, or open the form when details are missing).
+  if (e.key === 'Enter' && !e.shiftKey && e.target.id === 'qa-text') {
+    e.preventDefault();
+    document.querySelector('#qa-out .btn.primary')?.click();
+  }
+});
+
+// Tapping into the text box means "I'd rather type": stop listening.
+document.addEventListener('focusin', (e) => {
+  if (e.target.id === 'qa-text' && qa.rec) qa.rec.stop();
+});
+
+document.addEventListener('input', (e) => {
+  if (e.target.id !== 'qa-text') return;
+  qa.text = e.target.value;
+  qa.kind = null;
+  renderQuickAdd();
 });
 
 document.addEventListener('change', (e) => {
