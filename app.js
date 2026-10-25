@@ -64,12 +64,11 @@ const membersMeFirst = () => [me(), ...S.ctx.members.filter((m) => m.id !== me()
 const doneToday = (t) => t.done_at && localDate(new Date(t.done_at)) === today();
 const catIcon = (name) => CATEGORIES.find((c) => c.name === name)?.icon ?? '📦';
 const catIndex = (name) => Math.max(0, CATEGORIES.findIndex((c) => c.name === name));
-const areaIcon = (name) => AREAS.find((a) => a.name === name)?.icon ?? '•';
 
 // Each partner has a fixed color (by household join order) so both phones agree on who is who.
 const whoClass = (id) => (S.ctx.members.findIndex((m) => m.id === id) === 1 ? 'who-b' : 'who-a');
-// Partners are told apart by colour and shape (circle / diamond), so it reads without colour too.
-const whoChip = (id) => (id ? `<i class="who ${whoClass(id)}" aria-hidden="true"></i>` : '');
+// Two-Do style: a small filled circle in the partner's colour with their initial.
+const whoChip = (id) => (id ? `<span class="who ${whoClass(id)}" aria-hidden="true">${esc((S.ctx.members.find((m) => m.id === id)?.name ?? '?').slice(0, 1))}</span>` : '');
 
 const ICON_PATHS = {
   today: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
@@ -78,6 +77,8 @@ const ICON_PATHS = {
   expenses: '<rect x="3" y="6" width="18" height="14" rx="3"/><path d="M3 10h18M16 15h2"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  chevron: '<path d="m15 18-6-6 6-6"/>',
 };
 const icon = (name) => `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_PATHS[name]}</svg>`;
 
@@ -165,16 +166,22 @@ function render() {
   const body = { today: viewToday, home: viewHome, personal: viewPersonal, expenses: viewExpenses }[tab.id]();
   const dateLine = new Date().toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'long' });
   const tabBtn = (t) => `<button class="tab ${t.id === tab.id ? 'on' : ''}" data-action="tab" data-tab="${t.id}">${icon(t.id)}<span>${t.label}</span></button>`;
+  // Two-Do top bar: wordmark on one side, settings + "name & name" on the other (the signed-in one lit up).
+  const names = S.ctx.members.map((m) => `<span class="${whoClass(m.id)} ${m.id === me().id ? 'me' : ''}">${esc(m.name)}</span>`).join('<i>&amp;</i>');
   app.innerHTML = `
-    <header class="top">
-      <div>
-        <div class="eyebrow">${tab.id === 'today' ? esc(dateLine) : esc(S.ctx.household.name)}</div>
-        <h1>${tab.id === 'today' ? `${greeting()}, ${esc(me().name)}` : tab.label}</h1>
+    <header class="topbar">
+      <div class="brand">הבית<span>שלנו</span></div>
+      <div class="topbar-right">
+        <button class="icon-btn" data-action="settings" aria-label="הגדרות">${icon('settings')}</button>
+        <div class="names">${names}</div>
       </div>
-      <button class="avatar ${whoClass(me().id)}" data-action="settings" aria-label="הגדרות">${esc(me().name.slice(0, 1))}</button>
     </header>
-    ${store.mode === 'demo' ? `<div class="demo-bar">מצב הדגמה, מחובר/ת כ<b>${esc(me().name)}</b><button data-action="switch-user">החלפת משתמש</button></div>` : ''}
-    ${tab.id === 'today' ? todayProgress() : tab.id === 'home' ? togetherBar() : ''}
+    <div class="hello">
+      <div class="eyebrow">${tab.id === 'today' ? esc(dateLine) : esc(S.ctx.household.name)}</div>
+      <h1>${tab.id === 'today' ? `${greeting()}, ${esc(me().name)}` : tab.label}</h1>
+    </div>
+    ${tab.id === 'today' || tab.id === 'home' ? togetherBar() : ''}
+    ${store.mode === 'demo' ? `<div class="demo-bar"><span>מצב הדגמה</span><button data-action="switch-user">החלפת משתמש</button></div>` : ''}
     <main class="content">${body}</main>
     <nav class="tabbar">
       ${TABS.slice(0, 2).map(tabBtn).join('')}
@@ -183,13 +190,14 @@ function render() {
     </nav>`;
 }
 
+// A rolling week (the last 7 days), so the bar isn't empty every Sunday morning.
 function weekStartIso() {
   const d = startOfDay(new Date());
-  d.setDate(d.getDate() - d.getDay()); // week starts on Sunday
+  d.setDate(d.getDate() - 6);
   return d.toISOString();
 }
 
-// "Together this week": how many shared home things each partner did since Sunday.
+// "Together this week": how many shared home things each partner did in the last 7 days.
 function togetherBar() {
   if (S.ctx.members.length < 2) return '';
   const since = weekStartIso();
@@ -201,40 +209,21 @@ function togetherBar() {
   const ca = counts[a.id] ?? 0;
   const cb = counts[b.id] ?? 0;
   const total = ca + cb;
-  const pa = total ? (ca / total) * 100 : 50;
+  // Each side grows from its own end toward the middle, against a soft weekly scale (Two-Do's together bar).
+  const scale = Math.max(total, 14);
   return `
-    <div class="panel together">
-      <div class="together-head"><span>מה עשינו השבוע</span><span><b>${total}</b> ביחד</span></div>
-      <div class="split-bar"><span class="who-a" style="width:${pa}%"></span><span class="who-b"></span></div>
-      <div class="split-legend">
-        <span><i class="dot who-a"></i>${esc(a.name)}<b>${ca}</b></span>
-        <span><i class="dot who-b"></i>${esc(b.name)}<b>${cb}</b></span>
+    <div class="together">
+      <div class="together-bar"><span class="who-a" style="width:${(ca / scale) * 100}%"></span><span class="who-b" style="width:${(cb / scale) * 100}%"></span></div>
+      <div class="together-legend">
+        <span><i class="dot who-a"></i>${esc(a.name)} <b>${ca}</b></span>
+        <span><b>${total}</b> יחד השבוע</span>
+        <span><b>${cb}</b> ${esc(b.name)} <i class="dot who-b"></i></span>
       </div>
     </div>`;
 }
 
-// "X of Y" for today (Grassfeld's budget pattern): home chores, dated tasks and habits.
-function todayProgress() {
-  const t = today();
-  const choreDoneToday = new Set(S.data.chore_log.filter((l) => localDate(new Date(l.done_at)) === t).map((l) => l.chore_id));
-  const choresDue = S.data.chores.filter((c) => choreStatus(c).remaining <= 0).length;
-  const tasks = S.data.tasks.filter((x) => x.kind === 'task' && visibleNow(x) && x.due_date && x.due_date <= t);
-  const habits = S.data.tasks.filter((x) => x.kind === 'habit');
-  const habitsDone = habits.filter((h) => S.data.habit_checks.some((c) => c.task_id === h.id && c.day === t)).length;
-  const done = choreDoneToday.size + tasks.filter((x) => x.done_at).length + habitsDone;
-  const total = done + choresDue + tasks.filter((x) => !x.done_at).length + (habits.length - habitsDone);
-  if (!total) return '';
-  const left = total - done;
-  return `
-    <div class="panel progress">
-      <div class="progress-num">${done}<small>/${total}</small></div>
-      <div class="progress-label">${left ? `נשארו <b>${left}</b> דברים להיום` : '<b>הכל בוצע להיום</b>'}</div>
-      <div class="bar"><span style="width:${(done / total) * 100}%"></span></div>
-    </div>`;
-}
-
 function section(title, inner, count) {
-  return `<section class="sec"><div class="sec-head"><h2>${title}</h2>${count ? `<span class="count">${count}</span>` : ''}</div>${inner}</section>`;
+  return `<section class="sec"><h2 class="section-label">${title}${count ? `<span class="count">${count}</span>` : ''}</h2>${inner}</section>`;
 }
 
 function choreRow(c) {
@@ -242,20 +231,19 @@ function choreRow(c) {
   const fill = Math.min(st.ratio, 1) * 100;
   return `
     <div class="row chore lvl-${st.level}" data-action="edit-chore" data-id="${c.id}">
+      <button class="box" data-action="done-chore" data-id="${c.id}" aria-label="סמן כבוצע"></button>
       <div class="row-main">
-        <div class="row-title">${esc(c.title)}</div>
+        <div class="row-head"><span class="row-title">${esc(c.title)}</span><span class="pill">${st.pill}</span></div>
         <div class="row-sub">${st.sub}</div>
         <div class="meter"><span style="width:${fill}%"></span></div>
       </div>
-      <span class="pill">${st.pill}</span>
-      <button class="check" data-action="done-chore" data-id="${c.id}" aria-label="סמן כבוצע">${icon('check')}</button>
     </div>`;
 }
 
 function taskRow(t) {
   const late = t.due_date && !t.done_at && t.due_date < today();
   const sub = [
-    t.household_id ? '<span class="tag">בית · משותף</span>' : `${areaIcon(t.area)} ${esc(t.area)}`,
+    t.household_id ? '<span class="tag">בית · משותף</span>' : `<span class="tag">${esc(t.area)}</span>`,
     t.due_date && !t.done_at ? `<span class="${late ? 'late' : ''}">${dueLabel(t.due_date)}</span>` : '',
     t.done_at ? `${t.household_id && t.done_by ? `${whoChip(t.done_by)}${esc(memberName(t.done_by))} · ` : ''}${agoHe(dayDiff(new Date(t.done_at), new Date()))}` : '',
   ].filter(Boolean).join(' · ');
@@ -279,14 +267,13 @@ function habitRow(h, compact = false) {
       <small>${WEEKDAYS[parseDate(d).getDay()]}</small>
     </button>`).join('');
   return `
-    <div class="row habit" data-action="edit-task" data-id="${h.id}">
+    <div class="row habit ${compact && checkedToday ? 'done' : ''}" data-action="edit-task" data-id="${h.id}">
+      ${compact ? `<button class="box" data-action="toggle-habit" data-id="${h.id}" data-day="${today()}" aria-label="בוצע היום">${checkedToday ? icon('check') : ''}</button>` : ''}
       <div class="row-main">
         <div class="row-title">${esc(h.title)}</div>
-        <div class="row-sub">${areaIcon(h.area)} ${esc(h.area)}${s ? ` · <span class="streak">🔥 ${s} ${s === 1 ? 'יום' : 'ברצף'}</span>` : ''}</div>
+        <div class="row-sub"><span class="tag">${esc(h.area)}</span>${s ? `<span class="streak">✦ ${s} ${s === 1 ? 'יום' : 'ימים ברצף'}</span>` : ''}</div>
       </div>
-      ${compact
-        ? `<button class="check ${checkedToday ? 'on' : ''}" data-action="toggle-habit" data-id="${h.id}" data-day="${today()}" aria-label="בוצע היום">${icon('check')}</button>`
-        : `<div class="dots">${dots}</div>`}
+      ${compact ? '' : `<div class="dots">${dots}</div>`}
     </div>`;
 }
 
@@ -366,7 +353,7 @@ function viewPersonal() {
   const groups = AREAS.map((a) => [a, current.filter((t) => t.area === a.name).sort(byOpenThenDue)]).filter(([, list]) => list.length);
   return `
     ${seg}
-    ${groups.length ? groups.map(([a, list]) => section(`${a.icon} ${a.name}`, `<div class="list">${list.map(taskRow).join('')}</div>`, list.filter((t) => !t.done_at).length)).join('') : empty('אין משימות פתוחות 🎉')}`;
+    ${groups.length ? groups.map(([a, list]) => section(a.name, `<div class="list">${list.map(taskRow).join('')}</div>`, list.filter((t) => !t.done_at).length)).join('') : empty('אין משימות פתוחות 🎉')}`;
 }
 
 function viewExpenses() {
