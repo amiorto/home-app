@@ -38,6 +38,7 @@ const S = {
   data: null,
   personalView: 'tasks',
   showHomeDone: false,
+  room: null, // the room picked on the Home screen, null for all of them
   expView: 'list',
   month: localDate().slice(0, 7),
   authMode: 'login',
@@ -178,12 +179,7 @@ function render() {
   document.body.classList.remove('who-a', 'who-b');
   document.body.classList.add(whoClass(me().id));
   app.innerHTML = `
-    <header class="topbar">
-      <div class="date">${tab.id === 'today' ? esc(dateLine) : esc(S.ctx.household.name)}</div>
-      <button class="icon-btn" data-action="settings" aria-label="הגדרות">${icon('settings')}</button>
-    </header>
-    <h1 class="hello">${tab.id === 'today' ? `${greeting()},<br>${esc(me().name)}` : tab.label}</h1>
-    ${tab.id === 'today' || tab.id === 'home' ? togetherBand() : ''}
+    ${{ today: () => houseScene(dateLine), home: homeScene, personal: plantScene, expenses: expenseScene }[tab.id]()}
     ${store.mode === 'demo' ? `<div class="demo-bar"><span>מצב הדגמה. מחובר/ת כ<b>${esc(me().name)}</b></span><button data-action="switch-user">החלפה</button></div>` : ''}
     <main class="content">${body}</main>
     <nav class="tabbar">
@@ -192,6 +188,90 @@ function render() {
       ${TABS.slice(2).map(tabBtn).join('')}
     </nav>
     <button class="voice-fab" data-action="voice" aria-label="הוספה בהקלטה">${icon('mic')}</button>`;
+  if (tab.id === 'expenses') animateExpenses();
+  else S.anim = null;
+}
+
+function sceneTop(text) {
+  return `
+    <div class="scene-top">
+      <div class="date">${esc(text)}</div>
+      <button class="icon-btn" data-action="settings" aria-label="הגדרות">${icon('settings')}</button>
+    </div>`;
+}
+
+/* The house on the Today screen: one room lights up for each share of the day that's done. */
+
+// Each room: x, y, width, height, and what you see inside once its light is on.
+const ROOMS = [
+  [142, 74, 52, 42, '<rect x="148" y="86" width="16" height="30"/><rect x="170" y="100" width="20" height="16"/>'],
+  [200, 74, 52, 42, '<path d="M226 74v12"/><path d="M219 94l3-8h8l3 8z"/><rect x="210" y="106" width="32" height="10"/>'],
+  [258, 74, 62, 42, '<path d="M266 116v-14h46v14zM262 104h6v12h-6zM310 104h6v12h-6z"/>'],
+  [82, 136, 56, 60, '<path d="M104 196l-3-16h16l-3 16z"/><path d="M109 180c-10-8-12-20-8-30 6 6 10 16 8 30zm0 0c8-6 12-16 10-26-6 5-10 14-10 26z"/>'],
+  [146, 136, 70, 60, '<path d="M181 136v12"/><path d="M173 156l3-8h10l3 8z"/><rect x="154" y="172" width="54" height="24"/>'],
+  [224, 136, 70, 60, '<path d="M232 196v-22h40v22zM228 176h6v20h-6zM270 176h6v20h-6z"/><path d="M284 196v-40"/><path d="M279 158l3-10h4l3 10z"/>'],
+];
+
+function roomsLit(done, total) {
+  if (!total) return ROOMS.length;
+  if (done >= total) return ROOMS.length;
+  return done ? Math.min(ROOMS.length - 1, Math.max(1, Math.round((done / total) * ROOMS.length))) : 0;
+}
+
+// Everything on today's plate (the same items the Today lists show), done or not.
+function todayProgress() {
+  const open = S.data.chores.filter((c) => choreStatus(c).remaining <= 0).length;
+  const doneChores = S.data.chores.filter((c) => c.last_done_at && dayDiff(new Date(c.last_done_at), new Date()) === 0).length;
+  const tasks = S.data.tasks.filter((t) => t.kind === 'task' && visibleNow(t) && t.due_date && t.due_date <= today());
+  const doneTasks = tasks.filter((t) => t.done_at).length;
+  const habits = S.data.tasks.filter((t) => t.kind === 'habit');
+  const doneHabits = habits.filter((h) => S.data.habit_checks.some((c) => c.task_id === h.id && c.day === today())).length;
+  const done = doneChores + doneTasks + doneHabits;
+  return { done, total: done + open + tasks.length - doneTasks + habits.length - doneHabits };
+}
+
+function dayPart() {
+  const h = new Date().getHours();
+  return h < 5 || h >= 21 ? 'night' : h < 11 ? 'morning' : h < 17 ? 'noon' : 'evening';
+}
+
+function houseScene(dateLine) {
+  const { done, total } = todayProgress();
+  const lit = roomsLit(done, total);
+  const left = total - done;
+  const line = !total ? 'אין כלום להיום, הבית מואר' : !left ? 'סיימת הכל, הבית מואר' : left === 1 ? 'עוד דבר אחד להיום' : `עוד ${left} דברים להיום`;
+  const rooms = ROOMS.map(([x, y, w, h, inside], i) => `
+    <g class="room ${i < lit ? 'on' : ''}">
+      ${y > 100 ? `<path class="spill" d="M${x} 196h${w}l14 18h-${w + 28}z"/>` : ''}
+      <rect class="glass" x="${x}" y="${y}" width="${w}" height="${h}"/>
+      <g class="light"><rect x="${x}" y="${y}" width="${w}" height="${h}"/><g class="things">${inside}</g></g>
+      <path class="mullion" d="M${x + w / 2} ${y}v${h}"/>
+    </g>`).join('');
+  return `
+    <header class="scene is-${dayPart()}">
+      ${sceneTop(dateLine)}
+      <h1 class="hello">${greeting()},<br>${esc(me().name)}</h1>
+      <p class="scene-line">${line}</p>
+      <svg class="house" viewBox="0 0 390 220" role="img" aria-label="בית שבו ${lit} מתוך ${ROOMS.length} חדרים מוארים">
+        <circle class="sun" cx="62" cy="52" r="20"/>
+        <path class="hill-far" d="M0 150c60-30 120-15 190-22s130-23 200 2v90H0z"/>
+        <path class="hill-near" d="M0 176c80-25 150-10 230-16s120-10 160 5v55H0z"/>
+        <path class="tree" d="M38 196c-9-24-7-62 3-92 10 30 12 68 3 92z"/>
+        <path class="tree" d="M20 196c-6-16-5-42 2-60 7 18 8 44 3 60z"/>
+        <rect class="wall" x="70" y="124" width="236" height="72"/>
+        <rect class="wall-up" x="128" y="64" width="204" height="60"/>
+        <rect class="shade" x="306" y="124" width="26" height="72"/>
+        <rect class="frame" x="326" y="124" width="3" height="72"/>
+        <rect class="frame" x="120" y="58" width="220" height="6"/>
+        <rect class="frame" x="62" y="118" width="74" height="6"/>
+        <path class="rail" d="M66 118V100h58M80 100v18M95 100v18M110 100v18"/>
+        <rect class="ground" y="196" width="390" height="24"/>
+        ${rooms}
+        <rect class="pool" x="96" y="205" width="200" height="7" rx="3.5"/>
+        <path class="tree" d="M356 196c1-14 0-24-3-34h7c-2 10-2 20-1 34z"/>
+        <path class="tree" d="M334 158c-8-14 6-28 20-24 12-8 32 2 28 18 6 12-10 22-22 16-10 6-26 2-26-10z"/>
+      </svg>
+    </header>`;
 }
 
 // A rolling week (the last 7 days), so the bar isn't empty every Sunday morning.
@@ -201,34 +281,130 @@ function weekStartIso() {
   return d.toISOString();
 }
 
-// The one loud element: a full-width band in the two partners' colours, split by how many
-// shared home things each did in the last 7 days.
-function togetherBand() {
-  if (S.ctx.members.length < 2) return '';
+// How many shared home things each partner did in the last 7 days.
+function weekCounts() {
   const since = weekStartIso();
   const counts = {};
   const add = (id) => { if (id) counts[id] = (counts[id] ?? 0) + 1; };
   for (const l of S.data.chore_log) if (l.done_at >= since) add(l.done_by);
   for (const t of S.data.tasks) if (t.household_id && t.done_at && t.done_at >= since) add(t.done_by);
-  const [a, b] = S.ctx.members;
-  const ca = counts[a.id] ?? 0;
-  const cb = counts[b.id] ?? 0;
-  const total = ca + cb;
-  return splitBand([[a, ca, String(ca)], [b, cb, String(cb)]],
-    total ? `השבוע עשיתם יחד ${total} דברים בבית` : 'השבוע עוד לא סומן כלום בבית');
+  return counts;
 }
 
-// parts: [[member, weight, label]] — each side's width follows its weight (+1 so a zero still shows).
-function splitBand(parts, note) {
+/* The Home screen: the house cut open. A room with chores waiting is dark; finish them and its light comes on. */
+
+const CELLS = [
+  { id: 'bedroom', wall: '#ffe0b0', thing: '#c9743f', name: 'חדר שינה', x: 30, y: 40, w: 135, h: 80, words: ['מצעים', 'מיטה', 'ארון', 'שינה'],
+    things: '<rect x="62" y="96" width="78" height="16" rx="3"/><rect x="134" y="84" width="8" height="28"/><rect x="112" y="90" width="22" height="7" rx="3"/>' },
+  { id: 'bath', wall: '#c9ecef', thing: '#3d8fa0', name: 'אמבטיה', x: 165, y: 40, w: 135, h: 80, words: ['אמבטיה', 'מקלחת', 'שירותים', 'אסלה', 'מראה'],
+    things: '<path d="M186 96h70v6a10 10 0 0 1-10 10h-50a10 10 0 0 1-10-10z"/><rect x="194" y="74" width="3" height="22"/><rect x="194" y="72" width="14" height="3"/><rect x="270" y="72" width="16" height="26" rx="8"/>' },
+  { id: 'balcony', wall: '#dff0d0', thing: '#4f9a5b', name: 'מרפסת', x: 300, y: 60, w: 72, h: 60, words: ['עציץ', 'עציצים', 'צמחים', 'מרפסת', 'גינה', 'להשקות'],
+    things: '<path d="M326 120l-3-14h16l-3 14z"/><path d="M331 106c-8-6-10-16-6-24 5 5 8 14 6 24zm0 0c7-5 10-13 8-21-5 4-8 12-8 21z"/><path d="M354 120l-2-9h12l-2 9z"/><path d="M358 111c-5-4-6-10-4-15 3 3 5 9 4 15z"/>' },
+  { id: 'living', wall: '#ffd2a6', thing: '#c2583f', name: 'סלון', x: 30, y: 124, w: 120, h: 80, words: ['סלון', 'ספה', 'אבק', 'שטיח', 'טלוויזיה', 'מדף'],
+    things: '<path d="M48 204v-20h64v20zM42 186h8v18h-8zM110 186h8v18h-8z"/><rect x="130" y="160" width="2" height="44"/><path d="M125 162l3-12h6l3 12z"/>' },
+  { id: 'kitchen', wall: '#fff0bd', thing: '#cf9420', name: 'מטבח', x: 150, y: 124, w: 115, h: 80, words: ['מטבח', 'מקרר', 'כלים', 'מדיח', 'תנור', 'כיריים', 'שיש', 'זבל', 'מיקרו'],
+    things: '<rect x="160" y="178" width="95" height="26"/><path d="M198 144h20l6 12h-32z"/>' },
+  { id: 'other', wall: '#e3dcf6', thing: '#7a5cc7', name: 'שאר הבית', x: 265, y: 124, w: 107, h: 80, words: [],
+    things: '<rect x="284" y="170" width="34" height="34" rx="3"/><path d="M330 204l-3-22h26l-3 22z"/>' },
+];
+
+const roomOf = (c) => c.room ?? CELLS.find((r) => r.words.some((w) => c.title.includes(w)))?.id ?? 'other';
+const roomName = (id) => CELLS.find((r) => r.id === id)?.name;
+const waitingIn = (room) => S.data.chores.filter((c) => roomOf(c) === room && choreStatus(c).remaining <= 0).length;
+
+function homeScene() {
+  const waiting = CELLS.filter((r) => waitingIn(r.id)).length;
+  const line = !S.data.chores.length ? 'הוסיפו מטלות, וכל מטלה תמצא את החדר שלה' : !waiting ? 'כל החדרים מוארים' : waiting === 1 ? 'חדר אחד מחכה לך' : `${waiting} חדרים מחכים לך`;
+  const cells = CELLS.map((r) => {
+    const n = waitingIn(r.id);
+    return `
+      <g class="cell ${n ? '' : 'on'} ${S.room === r.id ? 'picked' : ''}" style="--wall:${r.wall};--thing:${r.thing}" data-action="room" data-room="${r.id}" role="button" aria-label="${r.name}${n ? `, ${n} מטלות מחכות` : ''}">
+        <rect class="glass" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}"/>
+        <g class="light"><rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}"/><rect class="floor" x="${r.x}" y="${r.y + r.h - 5}" width="${r.w}" height="5"/></g>
+        <g class="things">${r.things}</g>
+        <text class="cell-name" x="${r.x + r.w / 2 + (n && r.w < 90 ? 10 : 0)}" y="${r.y + 15}" text-anchor="middle">${r.name}</text>
+        ${n ? `<g class="badge"><circle cx="${r.x + 13}" cy="${r.y + 13}" r="9"/><text x="${r.x + 13}" y="${r.y + 17}" text-anchor="middle">${n}</text></g>` : ''}
+        <rect class="outline" x="${r.x + 1.5}" y="${r.y + 1.5}" width="${r.w - 3}" height="${r.h - 3}"/>
+      </g>`;
+  }).join('');
+  const counts = weekCounts();
   return `
-    <section class="band">
-      <div class="band-track">${parts.map(([m, w, label], i) => `
-        <div class="band-part ${i ? 'who-b' : 'who-a'}" style="flex-grow:${w + 1}">
-          <b>${label}</b><span>${esc(m.name)}</span>
-        </div>`).join('')}
+    <header class="scene is-${dayPart()}">
+      ${sceneTop(S.ctx.household.name)}
+      <h1 class="hello">הבית</h1>
+      <p class="scene-line">${line}</p>
+      <svg class="house flush" viewBox="0 0 390 226" role="group" aria-label="חתך של הבית">
+        <circle class="sun" cx="338" cy="26" r="16"/>
+        <path class="hill-far" d="M0 160c60-30 120-15 190-22s130-23 200 2v86H0z"/>
+        <path class="hill-near" d="M0 186c80-25 150-10 230-16s120-10 160 5v51H0z"/>
+        <path class="tree" d="M12 204c-5-18-4-44 3-64 7 20 8 46 3 64z"/>
+        <rect class="ground" y="204" width="390" height="22"/>
+        ${cells}
+        <rect class="frame" x="22" y="32" width="286" height="8"/>
+        <rect class="frame" x="24" y="40" width="6" height="164"/>
+        <rect class="frame" x="24" y="120" width="352" height="4"/>
+        <rect class="frame" x="372" y="124" width="4" height="80"/>
+        <rect class="frame" x="298" y="40" width="4" height="84"/>
+        <rect class="frame" x="163" y="40" width="3" height="80"/>
+        <rect class="frame" x="148" y="124" width="3" height="80"/>
+        <rect class="frame" x="264" y="124" width="3" height="80"/>
+        <path class="rail" d="M302 92h74v28M314 92v28M326 92v28M338 92v28M350 92v28M362 92v28"/>
+      </svg>
+      ${S.ctx.members.length === 2 ? `<div class="payers">${S.ctx.members.map((m, i) => `<div class="${i ? 'who-b' : 'who-a'}"><span>${esc(m.name)}, השבוע</span><b>${counts[m.id] ?? 0}</b></div>`).join('')}</div>` : ''}
+    </header>`;
+}
+
+/* The Personal screen: a pot that grows with every day you kept a habit. It stops when you stop, but never wilts. */
+
+const PLANT_STAGES = [0, 3, 7, 14, 30, 60];
+const STEM_HEIGHTS = [0, 20, 40, 62, 84, 100];
+
+function plantProgress() {
+  const days = new Set(S.data.habit_checks.map((c) => c.day)).size;
+  const stage = PLANT_STAGES.filter((d) => days >= d).length - 1;
+  return { days, stage, next: PLANT_STAGES[stage + 1] };
+}
+
+function plantSvg(stage, grew) {
+  const stemH = STEM_HEIGHTS[stage];
+  const top = 122 - stemH;
+  const leaves = Array.from({ length: stage * 2 }, (_, i) => {
+    const y = 118 - (i + 1) * (stemH / (stage * 2 + 1));
+    const dir = i % 2 ? -1 : 1;
+    const size = 16 + stage * 2 - i;
+    return `<path class="leaf ${grew && i >= (stage - 1) * 2 ? 'new' : ''}" style="animation-delay:${(i % 2) * 90}ms" d="M195 ${y}c${dir * size * .4} ${-size * .8} ${dir * size * 1.1} ${-size * .8} ${dir * size * 1.5} ${-size * .3}c${-dir * size * .3} ${size * .7} ${-dir * size} ${size * .8} ${-dir * size * 1.5} ${size * .3}z"/>`;
+  }).join('');
+  const petals = Array.from({ length: 6 }, (_, i) => `<ellipse class="petal" cx="195" cy="${top - 14}" rx="6" ry="11" transform="rotate(${i * 60} 195 ${top - 3})"/>`).join('');
+  const flower = stage === PLANT_STAGES.length - 1 ? `<g class="bloom ${grew ? 'new' : ''}">${petals}<circle class="heart" cx="195" cy="${top - 3}" r="6"/></g>` : '';
+  const sprout = stage ? `<rect class="stem" x="193.5" y="${top}" width="3" height="${stemH}" rx="1.5"/>` : '<ellipse class="seed" cx="195" cy="120" rx="8" ry="4"/>';
+  return `${sprout}${leaves}${flower}`;
+}
+
+function plantScene() {
+  const { days, stage, next } = plantProgress();
+  const grew = S.plantStage !== undefined && stage > S.plantStage;
+  S.plantStage = stage;
+  const line = !next ? 'העציץ שלך פורח' : !days ? 'סמן הרגל, והעציץ יתחיל לצמוח' : `עוד ${next - days} ימי הרגלים לשלב הבא`;
+  const open = S.data.tasks.filter((t) => t.kind === 'task' && !t.household_id && !t.done_at).length;
+  return `
+    <header class="scene is-${dayPart()}">
+      ${sceneTop(me().name)}
+      <h1 class="hello">אישי</h1>
+      <p class="scene-line">${line}</p>
+      <svg class="house" viewBox="0 0 390 170" role="img" aria-label="עציץ בשלב ${stage + 1} מתוך ${PLANT_STAGES.length}">
+        <circle class="sun" cx="70" cy="44" r="18"/>
+        <path class="hill-far" d="M0 120c60-30 120-15 190-22s130-23 200 2v70H0z"/>
+        <path class="hill-near" d="M0 140c80-25 150-10 230-16s120-10 160 5v41H0z"/>
+        <rect class="ground" y="158" width="390" height="12"/>
+        ${plantSvg(stage, grew)}
+        <path class="pot" d="M168 120h54l-6 40h-42z"/>
+        <rect class="pot-rim" x="164" y="116" width="62" height="9" rx="3"/>
+      </svg>
+      <div class="payers">
+        <div><span>ימי הרגלים</span><b>${days}</b></div>
+        <div class="who-b"><span>משימות פתוחות</span><b>${open}</b></div>
       </div>
-      ${note ? `<p class="band-note">${note}</p>` : ''}
-    </section>`;
+    </header>`;
 }
 
 function section(title, inner, count) {
@@ -338,7 +514,9 @@ function viewHome() {
     ...homeTasks.filter((t) => t.done_at).map((t) => ({ who: t.done_by, title: t.title, at: t.done_at })),
   ].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 8);
   return `
-    ${section('מטלות חוזרות', listOrEmpty(chores.map(choreRow), 'עוד אין מטלות. לחצו + כדי להוסיף'), chores.length)}
+    ${S.room
+    ? `<section class="sec"><h2 class="sec-row">${roomName(S.room)}<button data-action="room" data-room="${S.room}">כל החדרים</button></h2>${listOrEmpty(chores.filter((c) => roomOf(c) === S.room).map(choreRow), 'אין כאן מטלות')}</section>`
+    : section('מטלות חוזרות', listOrEmpty(chores.map(choreRow), 'עוד אין מטלות. לחצו + כדי להוסיף'), chores.length)}
     ${section('משימות לבית', listOrEmpty(current.map(taskRow), 'אין משימות פתוחות לבית'), current.filter((t) => !t.done_at).length)}
     ${olderDone.length ? `<button class="link" data-action="toggle-home-done">${S.showHomeDone ? 'הסתרת' : 'הצגת'} משימות שהושלמו (${olderDone.length})</button>
       ${S.showHomeDone ? `<div class="list">${olderDone.slice(0, 50).map(taskRow).join('')}</div>` : ''}` : ''}
@@ -375,12 +553,111 @@ function viewPersonal() {
     ${groups.length ? groups.map(([a, list]) => section(a.name, `<div class="list">${list.map(taskRow).join('')}</div>`, list.filter((t) => !t.done_at).length)).join('') : empty('אין משימות פתוחות')}`;
 }
 
-function viewExpenses() {
+function expenseSummary() {
   const list = monthExpenses().sort((a, b) => b.spent_on.localeCompare(a.spent_on) || (b.created_at ?? '').localeCompare(a.created_at ?? ''));
   const total = list.reduce((s, e) => s + e.amount, 0);
   const members = S.ctx.members; // household order, so the colors match on both phones
   const paid = Object.fromEntries(members.map((m) => [m.id, 0]));
   for (const e of list) paid[e.paid_by] = (paid[e.paid_by] ?? 0) + e.amount;
+  return { list, total, members, paid };
+}
+
+// The seesaw: whoever paid more this month sits lower. Level means you're even.
+const SEESAW_MAX = 13.5;
+
+function seesaw(members, paid, total) {
+  const figure = (m, x, cls) => `
+    <g class="${cls}">
+      <circle class="head" cx="${x}" cy="48" r="12"/>
+      <rect class="body" x="${x - 16}" y="62" width="32" height="30" rx="13"/>
+      <text x="${x}" y="83" text-anchor="middle">${esc(m.name.slice(0, 1))}</text>
+    </g>`;
+  return `
+    <svg class="house" viewBox="0 0 390 162" role="img" aria-label="נדנדה שמראה מי שילם יותר החודש">
+      <circle class="sun" cx="330" cy="30" r="16"/>
+      <path class="hill-far" d="M0 104c60-30 120-15 190-22s130-23 200 2v78H0z"/>
+      <path class="hill-near" d="M0 122c80-25 150-10 230-16s120-10 160 5v51H0z"/>
+      <rect class="ground" y="132" width="390" height="30"/>
+      <path class="pivot" d="M195 96l-18 36h36z"/>
+      <g class="plank">
+        <rect class="board" x="56" y="92" width="278" height="8" rx="4"/>
+        ${figure(members[0], 290, 'who-a')}
+        ${figure(members[1], 100, 'who-b')}
+      </g>
+    </svg>
+    <div class="payers">
+      ${members.map((m, i) => `<div class="${i ? 'who-b' : 'who-a'}"><span>${esc(m.name)}</span><b>${money(paid[m.id] ?? 0)}</b></div>`).join('')}
+    </div>`;
+}
+
+function expenseScene() {
+  const { total, members, paid } = expenseSummary();
+  const monthLabel = parseDate(S.month + '-01').toLocaleDateString('he-IL', { month: 'long', year: 'numeric' });
+  const isCurrent = S.month === today().slice(0, 7);
+  const pair = members.length === 2;
+  const lean = pair && total ? (paid[members[0].id] - paid[members[1].id]) / total : 0;
+  const angle = Math.sign(lean) * Math.sqrt(Math.abs(lean)) * SEESAW_MAX; // the root makes a small gap still visible
+  return `
+    <header class="scene is-${dayPart()}">
+      ${sceneTop(S.ctx.household.name)}
+      <div class="month-nav">
+        <button data-action="month" data-dir="-1" aria-label="חודש קודם">›</button>
+        <span>${monthLabel}</span>
+        <button data-action="month" data-dir="1" aria-label="חודש הבא" ${isCurrent ? 'disabled' : ''}>‹</button>
+      </div>
+      <h1 class="total" data-total="${total}" data-angle="${angle}">${money(total)}</h1>
+      <div class="total-note">הוצאות משותפות החודש</div>
+      ${pair ? seesaw(members, paid, total) : ''}
+    </header>`;
+}
+
+// The seesaw swings to its new tilt and the total counts up, from wherever they were before.
+function animateExpenses() {
+  const el = document.querySelector('.total');
+  const plank = document.querySelector('.plank');
+  if (!el) return;
+  const to = { angle: Number(el.dataset.angle), total: Number(el.dataset.total) };
+  const from = S.anim ?? { angle: 0, total: 0 };
+  S.anim = to;
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (plank) plank.style.transform = `rotate(${to.angle}deg)`;
+    return;
+  }
+  if (plank) {
+    plank.style.transform = `rotate(${from.angle}deg)`;
+    plank.getBoundingClientRect();
+    plank.classList.add('swing');
+    plank.style.transform = `rotate(${to.angle}deg)`;
+  }
+  if (from.total === to.total) return;
+  const start = performance.now();
+  const step = (now) => {
+    const t = Math.min(1, (now - start) / 700);
+    const eased = 1 - (1 - t) ** 3;
+    el.textContent = t < 1 ? money(Math.round(from.total + (to.total - from.total) * eased)) : money(to.total);
+    if (t < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+// A ring of the month's categories, largest first, with one share each.
+function categoryRing(byCat, total) {
+  let offset = 0;
+  const arcs = byCat.map((c) => {
+    const share = (c.sum / total) * 100;
+    const arc = `<circle class="arc cat-${c.i}" cx="60" cy="60" r="46" pathLength="100" stroke-dasharray="${Math.max(share - 1, .5)} 100" stroke-dashoffset="${-offset}"/>`;
+    offset += share;
+    return arc;
+  }).join('');
+  return `
+    <div class="ring">
+      <svg viewBox="0 0 120 120" aria-hidden="true">${arcs}</svg>
+      <div class="ring-mid"><b>${money(Math.round(total))}</b><span>${byCat.length === 1 ? 'קטגוריה אחת' : `${byCat.length} קטגוריות`}</span></div>
+    </div>`;
+}
+
+function viewExpenses() {
+  const { list, total, members, paid } = expenseSummary();
 
   let balance = '';
   if (members.length === 2) {
@@ -392,15 +669,13 @@ function viewExpenses() {
       : `<div class="balance"><span>${diff > 0 ? `לקבל מ${otherName}` : `להעביר ל${otherName}`}</span><b>${money(Math.abs(diff))}</b></div>`;
   }
 
-  const monthLabel = parseDate(S.month + '-01').toLocaleDateString('he-IL', { month: 'long', year: 'numeric' });
-  const isCurrent = S.month === today().slice(0, 7);
   const views = [['list', 'תנועות'], ['cats', 'קטגוריות']];
 
   let body;
   if (S.expView === 'cats') {
     const byCat = CATEGORIES.map((c, i) => ({ ...c, i, sum: list.filter((e) => e.category === c.name).reduce((s, e) => s + e.amount, 0) }))
       .filter((c) => c.sum > 0).sort((a, b) => b.sum - a.sum);
-    body = byCat.length ? `<div class="list">${byCat.map((c) => `
+    body = byCat.length ? `${categoryRing(byCat, total)}<div class="list">${byCat.map((c) => `
       <div class="row cat-row">
         <span class="tile cat-${c.i}">${icon(c.icon)}</span>
         <div class="row-main">
@@ -423,16 +698,6 @@ function viewExpenses() {
   }
 
   return `
-    <div class="hero">
-      <div class="month-nav">
-        <button data-action="month" data-dir="-1" aria-label="חודש קודם">›</button>
-        <span>${monthLabel}</span>
-        <button data-action="month" data-dir="1" aria-label="חודש הבא" ${isCurrent ? 'disabled' : ''}>‹</button>
-      </div>
-      <div class="total">${money(total)}</div>
-      <div class="total-note">הוצאות משותפות החודש</div>
-    </div>
-    ${members.length === 2 ? `<div class="band-bleed">${splitBand(members.map((m) => [m, paid[m.id] ?? 0, money(paid[m.id] ?? 0)]), '')}</div>` : ''}
     ${total ? balance : ''}
     <div class="seg">${views.map(([id, label]) => `<button class="${(S.expView ?? 'list') === id ? 'on' : ''}" data-action="exp-view" data-view="${id}">${label}</button>`).join('')}</div>
     ${body}`;
@@ -511,6 +776,8 @@ function choreSheet(c, draft = null) {
       <label class="field-label">באיזו תדירות?</label>
       ${chips('preset', [...INTERVALS, ['custom', 'אחר']], preset)}
       <div class="inline">כל <input name="custom_days" type="number" min="1" max="365" inputmode="numeric" value="${interval}" class="num"> ימים <small class="muted">(כשבוחרים "אחר")</small></div>
+      <label class="field-label">באיזה חדר?</label>
+      ${chips('room', [['', 'לפי השם'], ...CELLS.map((r) => [r.id, r.name])], c?.room ?? S.room ?? '')}
       <button class="btn primary" type="submit">${c ? 'שמירה' : 'הוספה'}</button>
       ${c ? `<button class="btn danger" type="button" data-action="delete" data-table="chores" data-id="${c.id}">מחיקת מטלה</button>` : ''}
     </form>`);
@@ -764,6 +1031,7 @@ const actions = {
   'close-sheet': () => closeSheet(),
   'personal-view': (el) => { S.personalView = el.dataset.view; render(); },
   'exp-view': (el) => { S.expView = el.dataset.view; render(); },
+  room: (el) => { S.room = S.room === el.dataset.room ? null : el.dataset.room; render(); },
   'set-theme': (el) => {
     theme = el.dataset.theme;
     try { localStorage.setItem('home-app-theme', theme); } catch {}
@@ -859,7 +1127,7 @@ const forms = {
   chore: async (f, id) => {
     const interval_days = f.preset === 'custom' ? Number(f.custom_days) : Number(f.preset);
     if (!interval_days || interval_days < 1) throw new Error('תדירות לא תקינה');
-    const row = { title: f.title.trim(), interval_days };
+    const row = { title: f.title.trim(), interval_days, room: f.room || null };
     if (id) await store.update('chores', id, row);
     else await store.insert('chores', { ...row, last_done_at: null, last_done_by: null });
   },
@@ -905,6 +1173,10 @@ async function celebrate(id) {
   const box = row.querySelector('.box');
   if (box) box.innerHTML = icon('check');
   row.classList.add('completing');
+  const { done, total } = todayProgress();
+  document.querySelectorAll('.room').forEach((r, i) => r.classList.toggle('on', i < roomsLit(done + 1, total)));
+  const chore = S.data.chores.find((c) => c.id === id);
+  if (chore && waitingIn(roomOf(chore)) === 1) document.querySelector(`.cell[data-room="${roomOf(chore)}"]`)?.classList.add('on');
   navigator.vibrate?.(12);
   await wait(450);
 }

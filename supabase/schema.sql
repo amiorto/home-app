@@ -21,6 +21,7 @@ create table public.chores (
   household_id uuid not null references public.households on delete cascade,
   title text not null,
   interval_days int not null check (interval_days between 1 and 365),
+  room text,
   last_done_at timestamptz,
   last_done_by uuid references public.profiles on delete set null,
   created_at timestamptz not null default now()
