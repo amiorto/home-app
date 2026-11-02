@@ -82,6 +82,7 @@ const ICON_PATHS = {
   check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   chevron: '<path d="m15 18-6-6 6-6"/>',
+  trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5M14 11v5"/>',
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
   keyboard: '<rect x="2" y="6" width="20" height="12" rx="2.5"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
   cart: '<path d="M3 4h2l2.4 11.2a1.5 1.5 0 0 0 1.5 1.2h8.6a1.5 1.5 0 0 0 1.5-1.2L20.5 8H6.2"/><circle cx="9.5" cy="20" r="1.2"/><circle cx="17" cy="20" r="1.2"/>',
@@ -411,11 +412,15 @@ function section(title, inner, count) {
   return `<section class="sec"><h2>${title}${count ? `<span class="count">${count}</span>` : ''}</h2>${inner}</section>`;
 }
 
-// Swipeable wrapper: dragging the row sideways past a threshold runs `action` (like tapping its checkbox).
-function swipe(rowHtml, action, id, day = '') {
+// Swipeable wrapper: dragging the row sideways uncovers a button. Dragging left uncovers `action`
+// (like tapping the checkbox) and dragging right uncovers delete; nothing happens until it's tapped.
+function swipe(rowHtml, action, id, table, doneLabel, day = '') {
   return `
-    <div class="swipe" data-swipe="${action}" data-id="${id}"${day ? ` data-day="${day}"` : ''}>
-      <div class="swipe-bg" aria-hidden="true">${icon('check')}</div>
+    <div class="swipe" data-swipe="${action}" data-table="${table}" data-id="${id}"${day ? ` data-day="${day}"` : ''}>
+      <div class="swipe-bg">
+        <button class="swipe-btn swipe-done" data-action="swipe-done">${icon('check')}<span>${doneLabel}</span></button>
+        <button class="swipe-btn swipe-delete" data-action="swipe-delete">${icon('trash')}<span>מחיקה</span></button>
+      </div>
       ${rowHtml}
     </div>`;
 }
@@ -430,7 +435,7 @@ function choreRow(c) {
         <div class="row-sub">${st.sub}</div>
       </div>
       <span class="pill">${st.pill}</span>
-    </div>`, 'done-chore', c.id);
+    </div>`, 'done-chore', c.id, 'chores', 'בוצע');
 }
 
 function taskRow(t) {
@@ -448,7 +453,7 @@ function taskRow(t) {
         <div class="row-title">${esc(t.title)}</div>
         <div class="row-sub">${sub}</div>
       </div>
-    </div>`, 'toggle-task', t.id);
+    </div>`, 'toggle-task', t.id, 'tasks', t.done_at ? 'החזרה' : 'בוצע');
 }
 
 function habitRow(h, compact = false) {
@@ -469,7 +474,7 @@ function habitRow(h, compact = false) {
       </div>
       ${compact ? '' : `<div class="dots">${dots}</div>`}
     </div>`;
-  return compact ? swipe(row, 'toggle-habit', h.id, today()) : row;
+  return compact ? swipe(row, 'toggle-habit', h.id, 'tasks', checkedToday ? 'החזרה' : 'בוצע', today()) : row;
 }
 
 function empty(text) { return `<div class="empty">${text}</div>`; }
@@ -1103,6 +1108,25 @@ const actions = {
     closeSheet();
     await refresh();
   },
+  'swipe-done': async (el) => {
+    const wrap = el.closest('.swipe');
+    closeSwipe();
+    await actions[wrap.dataset.swipe](wrap);
+  },
+  'swipe-delete': async (el) => {
+    const { table, id } = el.closest('.swipe').dataset;
+    closeSwipe();
+    const row = find(table, id);
+    // Deleting takes its history along, so undo has to bring that back too.
+    const [kidTable, kidKey] = table === 'chores' ? ['chore_log', 'chore_id'] : ['habit_checks', 'task_id'];
+    const kids = S.data[kidTable].filter((k) => k[kidKey] === id);
+    await store.remove(table, id);
+    await refresh();
+    toast(`"${row.title}" נמחק`, async () => {
+      await store.insert(table, row);
+      for (const k of kids) if (!find(kidTable, k.id)) await store.insert(kidTable, k);
+    });
+  },
   'copy-code': async (el) => {
     try { await navigator.clipboard.writeText(el.dataset.code); toast('הקוד הועתק'); } catch { toast(el.dataset.code); }
   },
@@ -1181,57 +1205,77 @@ async function celebrate(id) {
   await wait(450);
 }
 
-// Drag a row sideways (either way) past SWIPE_AT px to complete it; vertical moves stay scrolling.
-const SWIPE_AT = 88;
+// Drag a row sideways to uncover its button. It follows the finger up to the button's width, then
+// resists; let go past half of that and it stays open. Vertical moves stay scrolling.
+const SWIPE_OPEN = 92;
+const SWIPE_START = 14;
 let drag = null;
 let swallowClick = false;
+let openSwipe = null;
+
+function closeSwipe() {
+  if (!openSwipe) return;
+  openSwipe.classList.remove('open');
+  openSwipe.querySelector('.row').style.transform = '';
+  openSwipe = null;
+}
 
 document.addEventListener('pointerdown', (e) => {
+  if (e.target.closest('.swipe-btn')) return;
   const wrap = e.target.closest('.swipe');
+  if (openSwipe && openSwipe !== wrap) closeSwipe();
   if (!wrap || e.button > 0) return;
-  drag = { wrap, row: wrap.querySelector('.row'), x: e.clientX, y: e.clientY, dx: 0, on: false, id: e.pointerId };
+  const row = wrap.querySelector('.row');
+  drag = { wrap, row, x: e.clientX, y: e.clientY, base: new DOMMatrix(getComputedStyle(row).transform).m41, dx: 0, on: false, id: e.pointerId };
 });
 
 document.addEventListener('pointermove', (e) => {
   if (!drag || e.pointerId !== drag.id) return;
-  const dx = e.clientX - drag.x;
+  const moved = e.clientX - drag.x;
   const dy = e.clientY - drag.y;
   if (!drag.on) {
-    if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { drag = null; return; }
-    if (Math.abs(dx) < 10) return;
+    if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(moved)) { drag = null; return; }
+    if (Math.abs(moved) < SWIPE_START) return;
     drag.on = true;
     drag.wrap.classList.add('dragging');
     try { drag.wrap.setPointerCapture(e.pointerId); } catch {}
   }
-  drag.dx = dx;
-  drag.row.style.transform = `translateX(${dx}px)`;
-  drag.wrap.classList.toggle('armed', Math.abs(dx) >= SWIPE_AT);
+  const x = drag.base + moved;
+  const past = Math.abs(x) - SWIPE_OPEN;
+  drag.dx = past > 0 ? Math.sign(x) * (SWIPE_OPEN + past * .2) : x;
+  drag.row.style.transform = `translateX(${drag.dx}px)`;
 });
 
-function resetDrag(d) {
-  d.wrap.classList.remove('dragging', 'armed');
-  d.row.style.transform = '';
-}
-
-document.addEventListener('pointerup', async (e) => {
+document.addEventListener('pointerup', (e) => {
   if (!drag || e.pointerId !== drag.id) return;
   const d = drag;
   drag = null;
   if (!d.on) return;
   swallowClick = true; // the click that follows a drag shouldn't open the row
   setTimeout(() => { swallowClick = false; }, 60);
-  resetDrag(d);
-  if (Math.abs(d.dx) >= SWIPE_AT) {
-    try { await actions[d.wrap.dataset.swipe](d.wrap); } catch (err) { toast('שגיאה: ' + err.message); }
+  d.wrap.classList.remove('dragging');
+  if (Math.abs(d.dx) >= SWIPE_OPEN / 2) {
+    d.row.style.transform = `translateX(${Math.sign(d.dx) * SWIPE_OPEN}px)`;
+    d.wrap.classList.add('open');
+    openSwipe = d.wrap;
+  } else {
+    openSwipe = d.wrap;
+    closeSwipe();
   }
 });
 
 document.addEventListener('pointercancel', (e) => {
-  if (drag && e.pointerId === drag.id) { resetDrag(drag); drag = null; }
+  if (drag && e.pointerId === drag.id) {
+    drag.wrap.classList.remove('dragging');
+    openSwipe = drag.wrap;
+    closeSwipe();
+    drag = null;
+  }
 });
 
 document.addEventListener('click', async (e) => {
   if (swallowClick) { e.preventDefault(); e.stopPropagation(); return; }
+  if (openSwipe && !e.target.closest('.swipe-btn')) { closeSwipe(); e.preventDefault(); return; }
   const el = e.target.closest('[data-action]');
   if (!el || el.closest('#toast-root')) return;
   const fn = actions[el.dataset.action];

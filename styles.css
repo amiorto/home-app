@@ -204,18 +204,21 @@ input, textarea { font: inherit; color: inherit; }
 .dots .dot.on { background: var(--lamp); color: var(--on-lamp); }
 .dots .dot.is-today { box-shadow: 0 0 0 2px var(--sheet), 0 0 0 3.5px var(--ink); }
 
-/* ---------- swipe to complete ---------- */
-.swipe { position: relative; touch-action: pan-y; background: var(--who, var(--olive)); }
-.swipe-bg {
-  position: absolute; inset: 0; display: flex; align-items: center; justify-content: space-between;
-  padding: 0 22px; color: var(--on-color);
+/* ---------- swipe: uncovers a button, which then has to be tapped ---------- */
+.swipe { position: relative; touch-action: pan-y; background: var(--sheet); }
+.swipe-bg { position: absolute; inset: 0; display: flex; justify-content: space-between; }
+.swipe:not(.dragging):not(.open) .swipe-bg { visibility: hidden; }
+.swipe-btn {
+  width: 92px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  font: 700 13px/1 var(--sans);
 }
-.swipe-bg .ico { width: 24px; height: 24px; stroke-width: 2.6; transition: transform .15s; }
-.swipe.armed .swipe-bg .ico { transform: scale(1.3); }
-.swipe .row { transition: transform .22s cubic-bezier(.2, .8, .2, 1); }
+.swipe-btn .ico { width: 22px; height: 22px; stroke-width: 2.2; }
+.swipe-btn:active { filter: brightness(.92); }
+.swipe-done { background: var(--lamp); color: var(--on-lamp); }
+.swipe-delete { background: #cf3f3a; color: #fff; }
+.swipe .row { transition: transform .26s cubic-bezier(.2, .8, .2, 1); }
 .swipe.dragging .row { transition: none; }
-
-
+.list > .swipe.open:active { transform: none; box-shadow: 0 4px 0 var(--edge); }
 /* ---------- completing: box pops, tick draws, title gets struck through ---------- */
 .completing .box { background: var(--lamp); border-color: var(--lamp-edge); animation: box-pop .32s cubic-bezier(.3, 1.6, .5, 1); }
 .completing .box .ico path { stroke-dasharray: 26; stroke-dashoffset: 26; animation: tick .26s .06s ease-out forwards; }

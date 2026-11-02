@@ -1,5 +1,5 @@
 // Network-first: always fresh when online, cached shell when offline.
-const CACHE = 'home-app-v5';
+const CACHE = 'home-app-v6';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'store.js', 'parse.js', 'config.js', 'manifest.webmanifest', 'icons/icon-180.png', 'icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {
