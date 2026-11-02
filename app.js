@@ -189,9 +189,44 @@ function render() {
       ${TABS.slice(2).map(tabBtn).join('')}
     </nav>
     <button class="voice-fab" data-action="voice" aria-label="הוספה בהקלטה">${icon('mic')}</button>`;
+  fitScene();
   if (tab.id === 'expenses') animateExpenses();
   else S.anim = null;
 }
+
+// The scene is a fixed backdrop; the page starts just below its picture and scrolls over the rest.
+function fitScene() {
+  const last = document.querySelector('.scene')?.lastElementChild;
+  if (!last) return;
+  const root = document.documentElement.style;
+  root.setProperty('--scene-h', `${Math.round(last.getBoundingClientRect().bottom)}px`);
+  root.setProperty('--art-h', `${Math.round(document.querySelector('.scene .house')?.getBoundingClientRect().bottom ?? 0) - 1}px`);
+}
+addEventListener('resize', fitScene);
+// As the page scrolls, the scene's words fade and its picture dims, so nothing collides with the cards.
+addEventListener('scroll', () => {
+  const root = document.documentElement.style;
+  root.setProperty('--fade', Math.max(0, 1 - scrollY / 130).toFixed(2));
+  root.setProperty('--dim', (Math.min(1, scrollY / 240) * .6).toFixed(2));
+}, { passive: true });
+document.fonts?.ready.then(fitScene);
+
+// Shared by every scene: light falling on walls, lamp glow, foliage and clay.
+const ART_DEFS = `
+  <defs>
+    <linearGradient id="hillFar" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--far)"/><stop offset="1" style="stop-color:var(--near)"/></linearGradient>
+    <linearGradient id="hillNear" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--near)"/><stop offset="1" style="stop-color:var(--ground)"/></linearGradient>
+    <linearGradient id="wallLight" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".28"/><stop offset=".55" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".22"/></linearGradient>
+    <linearGradient id="eave" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity=".38"/><stop offset="1" stop-color="#000" stop-opacity="0"/></linearGradient>
+    <linearGradient id="roomDepth" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity=".2"/><stop offset=".35" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#7a3d00" stop-opacity=".16"/></linearGradient>
+    <linearGradient id="glassSheen" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".2"/><stop offset=".4" stop-color="#fff" stop-opacity="0"/></linearGradient>
+    <radialGradient id="lampGlow"><stop offset="0" stop-color="#ffd27a" stop-opacity=".75"/><stop offset="1" stop-color="#ffd27a" stop-opacity="0"/></radialGradient>
+    <linearGradient id="leaf" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6fce8c"/><stop offset="1" stop-color="#1f7a52"/></linearGradient>
+    <linearGradient id="clay" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity=".26"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".32"/></linearGradient>
+    <linearGradient id="waterG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a8e6f2"/><stop offset="1" stop-color="#3a9dbd"/></linearGradient>
+    <filter id="soft" x="-30%" y="-80%" width="160%" height="260%"><feGaussianBlur stdDeviation="5"/></filter>
+  </defs>
+  <g class="stars"><circle cx="30" cy="20" r="1.1"/><circle cx="96" cy="44" r=".8"/><circle cx="150" cy="16" r="1"/><circle cx="214" cy="36" r=".8"/><circle cx="262" cy="14" r="1.2"/><circle cx="310" cy="48" r=".8"/><circle cx="366" cy="22" r="1"/></g>`;
 
 function sceneTop(text) {
   return `
@@ -244,8 +279,10 @@ function houseScene(dateLine) {
   const rooms = ROOMS.map(([x, y, w, h, inside], i) => `
     <g class="room ${i < lit ? 'on' : ''}">
       ${y > 100 ? `<path class="spill" d="M${x} 196h${w}l14 18h-${w + 28}z"/>` : ''}
+      <ellipse class="glow" cx="${x + w / 2}" cy="${y + h / 2}" rx="${w * .95}" ry="${h * 1.05}" fill="url(#lampGlow)"/>
       <rect class="glass" x="${x}" y="${y}" width="${w}" height="${h}"/>
-      <g class="light"><rect x="${x}" y="${y}" width="${w}" height="${h}"/><g class="things">${inside}</g></g>
+      <g class="light"><rect x="${x}" y="${y}" width="${w}" height="${h}"/><g class="things">${inside}</g><rect class="depth" x="${x}" y="${y}" width="${w}" height="${h}" fill="url(#roomDepth)"/></g>
+      <rect x="${x}" y="${y}" width="${w}" height="${h}" fill="url(#glassSheen)"/>
       <path class="mullion" d="M${x + w / 2} ${y}v${h}"/>
     </g>`).join('');
   return `
@@ -254,13 +291,19 @@ function houseScene(dateLine) {
       <h1 class="hello">${greeting()},<br>${esc(me().name)}</h1>
       <p class="scene-line">${line}</p>
       <svg class="house" viewBox="0 0 390 220" role="img" aria-label="בית שבו ${lit} מתוך ${ROOMS.length} חדרים מוארים">
+        ${ART_DEFS}
         <circle class="sun" cx="62" cy="52" r="20"/>
         <path class="hill-far" d="M0 150c60-30 120-15 190-22s130-23 200 2v90H0z"/>
         <path class="hill-near" d="M0 176c80-25 150-10 230-16s120-10 160 5v55H0z"/>
         <path class="tree" d="M38 196c-9-24-7-62 3-92 10 30 12 68 3 92z"/>
         <path class="tree" d="M20 196c-6-16-5-42 2-60 7 18 8 44 3 60z"/>
+        <ellipse cx="205" cy="199" rx="170" ry="7" fill="#000" opacity=".3" filter="url(#soft)"/>
         <rect class="wall" x="70" y="124" width="236" height="72"/>
         <rect class="wall-up" x="128" y="64" width="204" height="60"/>
+        <rect x="70" y="124" width="236" height="72" fill="url(#wallLight)"/>
+        <rect x="128" y="64" width="204" height="60" fill="url(#wallLight)"/>
+        <rect x="128" y="64" width="204" height="12" fill="url(#eave)"/>
+        <rect x="128" y="124" width="178" height="12" fill="url(#eave)"/>
         <rect class="shade" x="306" y="124" width="26" height="72"/>
         <rect class="frame" x="326" y="124" width="3" height="72"/>
         <rect class="frame" x="120" y="58" width="220" height="6"/>
@@ -268,7 +311,7 @@ function houseScene(dateLine) {
         <path class="rail" d="M66 118V100h58M80 100v18M95 100v18M110 100v18"/>
         <rect class="ground" y="196" width="390" height="24"/>
         ${rooms}
-        <rect class="pool" x="96" y="205" width="200" height="7" rx="3.5"/>
+        <rect class="pool" x="96" y="205" width="200" height="7" rx="3.5" fill="url(#waterG)"/>
         <path class="tree" d="M356 196c1-14 0-24-3-34h7c-2 10-2 20-1 34z"/>
         <path class="tree" d="M334 158c-8-14 6-28 20-24 12-8 32 2 28 18 6 12-10 22-22 16-10 6-26 2-26-10z"/>
       </svg>
@@ -323,6 +366,7 @@ function homeScene() {
         <rect class="glass" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}"/>
         <g class="light"><rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}"/><rect class="floor" x="${r.x}" y="${r.y + r.h - 5}" width="${r.w}" height="5"/></g>
         <g class="things">${r.things}</g>
+        <rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" fill="url(#roomDepth)" pointer-events="none"/>
         <text class="cell-name" x="${r.x + r.w / 2 + (n && r.w < 90 ? 10 : 0)}" y="${r.y + 15}" text-anchor="middle">${r.name}</text>
         ${n ? `<g class="badge"><circle cx="${r.x + 13}" cy="${r.y + 13}" r="9"/><text x="${r.x + 13}" y="${r.y + 17}" text-anchor="middle">${n}</text></g>` : ''}
         <rect class="outline" x="${r.x + 1.5}" y="${r.y + 1.5}" width="${r.w - 3}" height="${r.h - 3}"/>
@@ -335,6 +379,7 @@ function homeScene() {
       <h1 class="hello">הבית</h1>
       <p class="scene-line">${line}</p>
       <svg class="house flush" viewBox="0 0 390 226" role="group" aria-label="חתך של הבית">
+        ${ART_DEFS}
         <circle class="sun" cx="338" cy="26" r="16"/>
         <path class="hill-far" d="M0 160c60-30 120-15 190-22s130-23 200 2v86H0z"/>
         <path class="hill-near" d="M0 186c80-25 150-10 230-16s120-10 160 5v51H0z"/>
@@ -393,13 +438,17 @@ function plantScene() {
       <h1 class="hello">אישי</h1>
       <p class="scene-line">${line}</p>
       <svg class="house" viewBox="0 0 390 170" role="img" aria-label="עציץ בשלב ${stage + 1} מתוך ${PLANT_STAGES.length}">
+        ${ART_DEFS}
         <circle class="sun" cx="70" cy="44" r="18"/>
         <path class="hill-far" d="M0 120c60-30 120-15 190-22s130-23 200 2v70H0z"/>
         <path class="hill-near" d="M0 140c80-25 150-10 230-16s120-10 160 5v41H0z"/>
         <rect class="ground" y="158" width="390" height="12"/>
         ${plantSvg(stage, grew)}
+        <ellipse cx="195" cy="161" rx="58" ry="5" fill="#000" opacity=".35" filter="url(#soft)"/>
         <path class="pot" d="M168 120h54l-6 40h-42z"/>
+        <path d="M168 120h54l-6 40h-42z" fill="url(#clay)"/>
         <rect class="pot-rim" x="164" y="116" width="62" height="9" rx="3"/>
+        <rect x="164" y="116" width="62" height="9" rx="3" fill="url(#clay)"/>
       </svg>
       <div class="payers">
         <div><span>ימי הרגלים</span><b>${days}</b></div>
@@ -579,6 +628,7 @@ function seesaw(members, paid, total) {
     </g>`;
   return `
     <svg class="house" viewBox="0 0 390 162" role="img" aria-label="נדנדה שמראה מי שילם יותר החודש">
+      ${ART_DEFS}
       <circle class="sun" cx="330" cy="30" r="16"/>
       <path class="hill-far" d="M0 104c60-30 120-15 190-22s130-23 200 2v78H0z"/>
       <path class="hill-near" d="M0 122c80-25 150-10 230-16s120-10 160 5v51H0z"/>
@@ -858,6 +908,8 @@ function expenseSheet(e, draft = null) {
     </form>`);
 }
 
+const APP_VERSION = 7; // shown in settings, to tell which version a phone is running
+
 function settingsSheet() {
   const h = S.ctx.household;
   openSheet('הגדרות', `
@@ -880,7 +932,8 @@ function settingsSheet() {
       ? `<div class="card stack"><b>מצב הדגמה</b><div class="muted">הנתונים נשמרים רק בדפדפן הזה. אחרי החיבור ל-Supabase הנתונים יסונכרנו בין שני הטלפונים.</div>
           <button class="btn" data-action="switch-user">החלפת משתמש (${esc(S.ctx.members.find((m) => m.id !== me().id).name)})</button>
           <button class="btn danger" data-action="reset-demo">איפוס נתוני הדגמה</button></div>`
-      : `<button class="btn danger" data-action="sign-out">התנתקות</button>`}`);
+      : `<button class="btn danger" data-action="sign-out">התנתקות</button>`}
+    <p class="version">גרסה ${APP_VERSION}</p>`);
 }
 
 /* ---------------- quick add (one sentence, typed or spoken) ---------------- */
