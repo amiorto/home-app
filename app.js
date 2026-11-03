@@ -196,12 +196,12 @@ function render() {
 
 // The scene is a fixed backdrop; the page starts just below its picture and scrolls over the rest.
 function fitScene() {
-  const photo = document.querySelector('.scene .photo-bg');
+  const photo = document.querySelector('.scene .photo-frame');
   // On a photo the page starts at the pool; elsewhere just below the scene's picture.
   const last = photo ? null : document.querySelector('.scene')?.lastElementChild;
   if (photo) {
     const box = photo.getBoundingClientRect();
-    const scale = Math.max(box.width / 941, box.height / 1392);
+    const scale = box.height / 1392;
     document.documentElement.style.setProperty('--scene-h', `${Math.round((POOL[0] - 280) * scale)}px`);
     return;
   }
@@ -283,16 +283,20 @@ function houseScene(dateLine) {
   const lit = roomsLit(done, total);
   const left = total - done;
   const line = !total ? 'אין כלום להיום, הבית מואר' : !left ? 'סיימת הכל, הבית מואר' : left === 1 ? 'עוד דבר אחד להיום' : `עוד ${left} דברים להיום`;
-  const clips = ROOMS.map(([x, y, w, h], i) => `
-    <clipPath id="win${i}"><rect x="${x - 6}" y="${y - 6}" width="${w + 12}" height="${h + 12}"/>${i >= 3 ? `<rect x="${x - 6}" y="${POOL[0]}" width="${w + 12}" height="${POOL[1]}"/>` : ''}</clipPath>`).join('');
-  const rooms = ROOMS.map((_, i) => `<image class="room ${i < lit ? 'on' : ''}" href="images/house-on.jpg" width="941" height="1672" clip-path="url(#win${i})"/>`).join('');
+  // Plain <img> layers cut with clip-path polygons (in % of the photo): Safari draws these reliably,
+  // unlike SVG <image> with clipPath. A downstairs window's polygon also takes in its strip of pool.
+  const pct = (v, of) => `${((v / of) * 100).toFixed(2)}%`;
+  const rooms = ROOMS.map(([x, y, w, h], i) => {
+    const [l, r, t, b] = [pct(x - 6, 941), pct(x + w + 6, 941), pct(y - 6, 1672), pct(y + h + 6, 1672)];
+    const pool = i >= 3 ? `, ${l} ${b}, ${l} ${pct(POOL[0], 1672)}, ${r} ${pct(POOL[0], 1672)}, ${r} ${pct(POOL[0] + POOL[1], 1672)}, ${l} ${pct(POOL[0] + POOL[1], 1672)}` : '';
+    const clip = `polygon(${l} ${t}, ${r} ${t}, ${r} ${b}, ${l} ${b}${pool})`;
+    return `<img class="room ${i < lit ? 'on' : ''}" src="images/house-on.jpg" alt="" style="-webkit-clip-path:${clip};clip-path:${clip}">`;
+  }).join('');
   return `
     <header class="scene photo">
-      <svg class="photo-bg" viewBox="0 280 941 1392" preserveAspectRatio="xMidYMin slice" role="img" aria-label="בית שבו ${lit} מתוך ${ROOMS.length} חדרים מוארים">
-        <defs>${clips}</defs>
-        <image href="images/house-off.jpg" width="941" height="1672"/>
-        ${rooms}
-      </svg>
+      <div class="photo-bg" role="img" aria-label="בית שבו ${lit} מתוך ${ROOMS.length} חדרים מוארים">
+        <div class="photo-frame"><img src="images/house-off.jpg" alt="">${rooms}</div>
+      </div>
       ${sceneTop(dateLine)}
       <h1 class="hello">${greeting()},<br>${esc(me().name)}</h1>
       <p class="scene-line">${line}</p>
@@ -889,7 +893,7 @@ function expenseSheet(e, draft = null) {
     </form>`);
 }
 
-const APP_VERSION = 8; // shown in settings, to tell which version a phone is running
+const APP_VERSION = 9; // shown in settings, to tell which version a phone is running
 
 function settingsSheet() {
   const h = S.ctx.household;
