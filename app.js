@@ -196,7 +196,15 @@ function render() {
 
 // The scene is a fixed backdrop; the page starts just below its picture and scrolls over the rest.
 function fitScene() {
-  const last = document.querySelector('.scene')?.lastElementChild;
+  const photo = document.querySelector('.scene .photo-bg');
+  // On a photo the page starts at the pool; elsewhere just below the scene's picture.
+  const last = photo ? null : document.querySelector('.scene')?.lastElementChild;
+  if (photo) {
+    const box = photo.getBoundingClientRect();
+    const scale = Math.max(box.width / 941, box.height / 1392);
+    document.documentElement.style.setProperty('--scene-h', `${Math.round((POOL[0] - 280) * scale)}px`);
+    return;
+  }
   if (!last) return;
   const root = document.documentElement.style;
   root.setProperty('--scene-h', `${Math.round(last.getBoundingClientRect().bottom)}px`);
@@ -236,17 +244,16 @@ function sceneTop(text) {
     </div>`;
 }
 
-/* The house on the Today screen: one room lights up for each share of the day that's done. */
+/* The house on the Today screen: a photo at dusk with its lights off, and the same photo with them on.
+   Each window shows through from the lit photo as another share of the day gets done. */
 
-// Each room: x, y, width, height, and what you see inside once its light is on.
+// Each window in the photo's own pixels (941 × 1672): x, y, width, height. Upstairs first.
 const ROOMS = [
-  [142, 74, 52, 42, '<rect x="148" y="86" width="16" height="30"/><rect x="170" y="100" width="20" height="16"/>'],
-  [200, 74, 52, 42, '<path d="M226 74v12"/><path d="M219 94l3-8h8l3 8z"/><rect x="210" y="106" width="32" height="10"/>'],
-  [258, 74, 62, 42, '<path d="M266 116v-14h46v14zM262 104h6v12h-6zM310 104h6v12h-6z"/>'],
-  [82, 136, 56, 60, '<path d="M104 196l-3-16h16l-3 16z"/><path d="M109 180c-10-8-12-20-8-30 6 6 10 16 8 30zm0 0c8-6 12-16 10-26-6 5-10 14-10 26z"/>'],
-  [146, 136, 70, 60, '<path d="M181 136v12"/><path d="M173 156l3-8h10l3 8z"/><rect x="154" y="172" width="54" height="24"/>'],
-  [224, 136, 70, 60, '<path d="M232 196v-22h40v22zM228 176h6v20h-6zM270 176h6v20h-6z"/><path d="M284 196v-40"/><path d="M279 158l3-10h4l3 10z"/>'],
+  [186, 744, 151, 145], [381, 744, 187, 145], [612, 744, 152, 145],
+  [178, 958, 159, 191], [381, 958, 188, 191], [612, 958, 159, 191],
 ];
+// The strip of pool below the house, which mirrors whichever downstairs window is lit.
+const POOL = [1203, 58];
 
 function roomsLit(done, total) {
   if (!total) return ROOMS.length;
@@ -276,45 +283,19 @@ function houseScene(dateLine) {
   const lit = roomsLit(done, total);
   const left = total - done;
   const line = !total ? 'אין כלום להיום, הבית מואר' : !left ? 'סיימת הכל, הבית מואר' : left === 1 ? 'עוד דבר אחד להיום' : `עוד ${left} דברים להיום`;
-  const rooms = ROOMS.map(([x, y, w, h, inside], i) => `
-    <g class="room ${i < lit ? 'on' : ''}">
-      ${y > 100 ? `<path class="spill" d="M${x} 196h${w}l14 18h-${w + 28}z"/>` : ''}
-      <ellipse class="glow" cx="${x + w / 2}" cy="${y + h / 2}" rx="${w * .95}" ry="${h * 1.05}" fill="url(#lampGlow)"/>
-      <rect class="glass" x="${x}" y="${y}" width="${w}" height="${h}"/>
-      <g class="light"><rect x="${x}" y="${y}" width="${w}" height="${h}"/><g class="things">${inside}</g><rect class="depth" x="${x}" y="${y}" width="${w}" height="${h}" fill="url(#roomDepth)"/></g>
-      <rect x="${x}" y="${y}" width="${w}" height="${h}" fill="url(#glassSheen)"/>
-      <path class="mullion" d="M${x + w / 2} ${y}v${h}"/>
-    </g>`).join('');
+  const clips = ROOMS.map(([x, y, w, h], i) => `
+    <clipPath id="win${i}"><rect x="${x - 6}" y="${y - 6}" width="${w + 12}" height="${h + 12}"/>${i >= 3 ? `<rect x="${x - 6}" y="${POOL[0]}" width="${w + 12}" height="${POOL[1]}"/>` : ''}</clipPath>`).join('');
+  const rooms = ROOMS.map((_, i) => `<image class="room ${i < lit ? 'on' : ''}" href="images/house-on.jpg" width="941" height="1672" clip-path="url(#win${i})"/>`).join('');
   return `
-    <header class="scene is-${dayPart()}">
+    <header class="scene photo">
+      <svg class="photo-bg" viewBox="0 280 941 1392" preserveAspectRatio="xMidYMin slice" role="img" aria-label="בית שבו ${lit} מתוך ${ROOMS.length} חדרים מוארים">
+        <defs>${clips}</defs>
+        <image href="images/house-off.jpg" width="941" height="1672"/>
+        ${rooms}
+      </svg>
       ${sceneTop(dateLine)}
       <h1 class="hello">${greeting()},<br>${esc(me().name)}</h1>
       <p class="scene-line">${line}</p>
-      <svg class="house" viewBox="0 0 390 220" role="img" aria-label="בית שבו ${lit} מתוך ${ROOMS.length} חדרים מוארים">
-        ${ART_DEFS}
-        <circle class="sun" cx="62" cy="52" r="20"/>
-        <path class="hill-far" d="M0 150c60-30 120-15 190-22s130-23 200 2v90H0z"/>
-        <path class="hill-near" d="M0 176c80-25 150-10 230-16s120-10 160 5v55H0z"/>
-        <path class="tree" d="M38 196c-9-24-7-62 3-92 10 30 12 68 3 92z"/>
-        <path class="tree" d="M20 196c-6-16-5-42 2-60 7 18 8 44 3 60z"/>
-        <ellipse cx="205" cy="199" rx="170" ry="7" fill="#000" opacity=".3" filter="url(#soft)"/>
-        <rect class="wall" x="70" y="124" width="236" height="72"/>
-        <rect class="wall-up" x="128" y="64" width="204" height="60"/>
-        <rect x="70" y="124" width="236" height="72" fill="url(#wallLight)"/>
-        <rect x="128" y="64" width="204" height="60" fill="url(#wallLight)"/>
-        <rect x="128" y="64" width="204" height="12" fill="url(#eave)"/>
-        <rect x="128" y="124" width="178" height="12" fill="url(#eave)"/>
-        <rect class="shade" x="306" y="124" width="26" height="72"/>
-        <rect class="frame" x="326" y="124" width="3" height="72"/>
-        <rect class="frame" x="120" y="58" width="220" height="6"/>
-        <rect class="frame" x="62" y="118" width="74" height="6"/>
-        <path class="rail" d="M66 118V100h58M80 100v18M95 100v18M110 100v18"/>
-        <rect class="ground" y="196" width="390" height="24"/>
-        ${rooms}
-        <rect class="pool" x="96" y="205" width="200" height="7" rx="3.5" fill="url(#waterG)"/>
-        <path class="tree" d="M356 196c1-14 0-24-3-34h7c-2 10-2 20-1 34z"/>
-        <path class="tree" d="M334 158c-8-14 6-28 20-24 12-8 32 2 28 18 6 12-10 22-22 16-10 6-26 2-26-10z"/>
-      </svg>
     </header>`;
 }
 
@@ -908,7 +889,7 @@ function expenseSheet(e, draft = null) {
     </form>`);
 }
 
-const APP_VERSION = 7; // shown in settings, to tell which version a phone is running
+const APP_VERSION = 8; // shown in settings, to tell which version a phone is running
 
 function settingsSheet() {
   const h = S.ctx.household;
