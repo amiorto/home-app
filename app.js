@@ -1,4 +1,5 @@
 import { createStore, localDate } from './store.js';
+import { VAPID_PUBLIC_KEY } from './config.js';
 import { parseQuick } from './parse.js';
 
 /* ---------------- constants ---------------- */
@@ -159,6 +160,8 @@ async function reloadSession() {
   unsubscribe();
   unsubscribe = S.ctx.household ? store.subscribe(onRemoteChange) : () => {};
   render();
+  // A phone that already allowed notifications re-registers, so the server always has it under whoever is signed in.
+  if (S.ctx.household && canPush && Notification.permission === 'granted') subscribePush().catch(() => {});
 }
 
 async function refresh() {
@@ -819,7 +822,35 @@ function expenseSheet(e, draft = null) {
     </form>`);
 }
 
-const APP_VERSION = 12; // shown in settings, to tell which version a phone is running
+const APP_VERSION = 13; // shown in settings, to tell which version a phone is running
+
+/* Notifications: the phone subscribes here; a Supabase function sends them (supabase/functions/notify). */
+const canPush = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const NOTIFY_PREFS = [
+  ['notify_morning', 'סיכום בוקר, ב-8:00'],
+  ['notify_due', 'מה שעוד מחכה להיום, ב-18:00'],
+  ['notify_habits', 'תזכורת להרגלים, ב-20:30'],
+  ['notify_partner', 'עדכונים מהבית: מטלות שבוצעו והוצאות חדשות'],
+];
+
+async function subscribePush() {
+  const reg = await navigator.serviceWorker.ready;
+  const key = Uint8Array.from(atob(VAPID_PUBLIC_KEY.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+  const sub = (await reg.pushManager.getSubscription()) ?? (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }));
+  await store.savePush(sub.toJSON());
+}
+
+function notifyCard() {
+  if (store.mode === 'demo') return '';
+  const homeScreen = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+  let body;
+  // On iPhone, notifications exist only for an app opened from the home screen.
+  if (!canPush) body = `<div class="muted">${/iPhone|iPad/.test(navigator.userAgent) && !homeScreen ? 'כדי לקבל התראות באייפון, הוסיפו את האפליקציה למסך הבית (שיתוף ← הוספה למסך הבית) ופתחו אותה משם.' : 'הדפדפן הזה לא תומך בהתראות.'}</div>`;
+  else if (Notification.permission === 'denied') body = '<div class="muted">ההתראות חסומות בטלפון. אפשר להפעיל אותן בהגדרות הטלפון, תחת "הבית שלנו".</div>';
+  else if (Notification.permission !== 'granted') body = '<button class="btn" data-action="enable-push">הפעלת התראות</button>';
+  else body = NOTIFY_PREFS.map(([key, label]) => `<label class="pref"><input type="checkbox" data-pref="${key}" ${me()[key] !== false ? 'checked' : ''}><span>${label}</span></label>`).join('');
+  return `<div class="card stack"><b>התראות</b>${body}</div>`;
+}
 
 function settingsSheet() {
   const h = S.ctx.household;
@@ -833,6 +864,7 @@ function settingsSheet() {
       <b>מראה</b>
       <div class="seg">${[['auto', 'אוטומטי'], ['dark', 'כהה'], ['light', 'בהיר']].map(([id, label]) => `<button class="${theme === id ? 'on' : ''}" data-action="set-theme" data-theme="${id}">${label}</button>`).join('')}</div>
     </div>
+    ${notifyCard()}
     <div class="card stack">
       <b>${esc(h.name)}</b>
       <div class="muted">חברים: ${S.ctx.members.map((m) => esc(m.name)).join(', ')}</div>
@@ -1041,6 +1073,7 @@ const actions = {
     const now = new Date().toISOString();
     await store.update('chores', c.id, { last_done_at: now, last_done_by: me().id });
     const log = await store.insert('chore_log', { chore_id: c.id, done_by: me().id, done_at: now });
+    store.notify(`${me().name}: בוצע "${c.title}"`);
     await refresh();
     toast(`"${c.title}" בוצע`, async () => {
       await store.update('chores', c.id, prev);
@@ -1052,6 +1085,7 @@ const actions = {
     const undone = { done_at: null, done_by: null };
     if (!t.done_at) await celebrate(t.id);
     await store.update('tasks', t.id, t.done_at ? undone : { done_at: new Date().toISOString(), done_by: me().id });
+    if (!t.done_at && t.household_id) store.notify(`${me().name}: בוצע "${t.title}"`);
     await refresh();
     if (!t.done_at) toast(`"${t.title}" בוצע`, () => store.update('tasks', t.id, undone));
   },
@@ -1096,6 +1130,13 @@ const actions = {
   },
   'switch-user': async () => { store.switchUser(); closeSheet(); await reloadSession(); },
   'reset-demo': async () => { if (!confirm('לאפס את כל נתוני ההדגמה?')) return; store.reset(); closeSheet(); await reloadSession(); },
+  'enable-push': async () => {
+    if ((await Notification.requestPermission()) === 'granted') {
+      await subscribePush();
+      toast('ההתראות הופעלו');
+    }
+    settingsSheet();
+  },
   'sign-out': async () => { await store.signOut(); closeSheet(); await reloadSession(); },
 };
 
@@ -1143,7 +1184,10 @@ const forms = {
     if (!amount || amount <= 0) throw new Error('סכום לא תקין');
     const row = { amount: Math.round(amount * 100) / 100, description: f.description.trim(), category: f.category, paid_by: f.paid_by, spent_on: f.spent_on };
     if (id) await store.update('expenses', id, row);
-    else await store.insert('expenses', row);
+    else {
+      await store.insert('expenses', row);
+      store.notify(`${me().name}: הוצאה חדשה, ${row.description} ${money(row.amount)}`);
+    }
     S.month = f.spent_on.slice(0, 7);
   },
 };
@@ -1270,6 +1314,11 @@ document.addEventListener('input', (e) => {
 });
 
 document.addEventListener('change', (e) => {
+  const pref = e.target.dataset.pref;
+  if (pref) {
+    const on = e.target.checked;
+    store.updateProfile({ [pref]: on }).then(() => { me()[pref] = on; }).catch((err) => { e.target.checked = !on; toast('שגיאה: ' + err.message); });
+  }
   if (['kind', 'area', 'repeat'].includes(e.target.name) && e.target.closest('form[data-form="task"]')) syncTaskForm(e.target.closest('form'));
   if (e.target.name === 'custom_days') {
     const custom = e.target.closest('form').querySelector('[name="preset"][value="custom"]');

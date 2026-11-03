@@ -468,3 +468,5 @@ input, textarea { font: inherit; color: inherit; }
 .photo-frame .grow { animation: grow 1.6s ease-in-out .3s backwards; }
 @keyframes grow { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .photo-frame .grow { animation: none; } }
+.pref { display: flex; align-items: center; gap: 10px; font-size: 15px; }
+.pref input { width: 20px; height: 20px; flex: none; accent-color: var(--lamp-edge); }

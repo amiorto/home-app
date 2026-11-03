@@ -5,3 +5,5 @@ Thumbs.db
 
 # Local Claude settings
 .claude/settings.local.json
+
+supabase/secrets.txt

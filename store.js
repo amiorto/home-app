@@ -128,6 +128,8 @@ function createDemoStore() {
       save();
     },
     async updateProfile(patch) { Object.assign(me(), patch); save(); },
+    async savePush() {},
+    notify() {},
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     // demo-only helpers
     switchUser() {
@@ -195,6 +197,9 @@ async function createCloudStore() {
     async update(table, id, patch) { return ok(await sb.from(table).update(patch).eq('id', id).select().single()); },
     async remove(table, id) { ok(await sb.from(table).delete().eq('id', id)); },
     async updateProfile(patch) { ok(await sb.from('profiles').update(patch).eq('id', ctx.user.id)); },
+    async savePush({ endpoint, keys }) { ok(await sb.rpc('save_push', { p_endpoint: endpoint, p_p256dh: keys.p256dh, p_auth: keys.auth })); },
+    // Tells the housemates' phones; a failure here shouldn't get in the way of what was just done.
+    notify(text) { sb.functions.invoke('notify', { body: { kind: 'partner', text } }).catch(() => {}); },
     subscribe(fn) {
       if (!ctx?.household) return () => {};
       if (channel) sb.removeChannel(channel);
