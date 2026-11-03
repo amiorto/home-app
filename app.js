@@ -220,23 +220,6 @@ addEventListener('scroll', () => {
 }, { passive: true });
 document.fonts?.ready.then(fitScene);
 
-// Shared by every scene: light falling on walls, lamp glow, foliage and clay.
-const ART_DEFS = `
-  <defs>
-    <linearGradient id="hillFar" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--far)"/><stop offset="1" style="stop-color:var(--near)"/></linearGradient>
-    <linearGradient id="hillNear" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--near)"/><stop offset="1" style="stop-color:var(--ground)"/></linearGradient>
-    <linearGradient id="wallLight" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".28"/><stop offset=".55" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".22"/></linearGradient>
-    <linearGradient id="eave" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity=".38"/><stop offset="1" stop-color="#000" stop-opacity="0"/></linearGradient>
-    <linearGradient id="roomDepth" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity=".2"/><stop offset=".35" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#7a3d00" stop-opacity=".16"/></linearGradient>
-    <linearGradient id="glassSheen" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".2"/><stop offset=".4" stop-color="#fff" stop-opacity="0"/></linearGradient>
-    <radialGradient id="lampGlow"><stop offset="0" stop-color="#ffd27a" stop-opacity=".75"/><stop offset="1" stop-color="#ffd27a" stop-opacity="0"/></radialGradient>
-    <linearGradient id="leaf" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6fce8c"/><stop offset="1" stop-color="#1f7a52"/></linearGradient>
-    <linearGradient id="clay" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity=".26"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".32"/></linearGradient>
-    <linearGradient id="waterG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a8e6f2"/><stop offset="1" stop-color="#3a9dbd"/></linearGradient>
-    <filter id="soft" x="-30%" y="-80%" width="160%" height="260%"><feGaussianBlur stdDeviation="5"/></filter>
-  </defs>
-  <g class="stars"><circle cx="30" cy="20" r="1.1"/><circle cx="96" cy="44" r=".8"/><circle cx="150" cy="16" r="1"/><circle cx="214" cy="36" r=".8"/><circle cx="262" cy="14" r="1.2"/><circle cx="310" cy="48" r=".8"/><circle cx="366" cy="22" r="1"/></g>`;
-
 function sceneTop(text) {
   return `
     <div class="scene-top">
@@ -274,10 +257,6 @@ function todayProgress() {
   return { done, total: done + open + tasks.length - doneTasks + habits.length - doneHabits };
 }
 
-function dayPart() {
-  const h = new Date().getHours();
-  return h < 5 || h >= 21 ? 'night' : h < 11 ? 'morning' : h < 17 ? 'noon' : 'evening';
-}
 
 function houseScene(dateLine) {
   const { done, total } = todayProgress();
@@ -575,33 +554,12 @@ function expenseSummary() {
   return { list, total, members, paid };
 }
 
-// The seesaw: whoever paid more this month sits lower. Level means you're even.
-const SEESAW_MAX = 13.5;
-
-function seesaw(members, paid, total) {
-  const figure = (m, x, cls) => `
-    <g class="${cls}">
-      <circle class="head" cx="${x}" cy="48" r="12"/>
-      <rect class="body" x="${x - 16}" y="62" width="32" height="30" rx="13"/>
-      <text x="${x}" y="83" text-anchor="middle">${esc(m.name.slice(0, 1))}</text>
-    </g>`;
-  return `
-    <svg class="house" viewBox="0 0 390 162" role="img" aria-label="נדנדה שמראה מי שילם יותר החודש">
-      ${ART_DEFS}
-      <circle class="sun" cx="330" cy="30" r="16"/>
-      <path class="hill-far" d="M0 104c60-30 120-15 190-22s130-23 200 2v78H0z"/>
-      <path class="hill-near" d="M0 122c80-25 150-10 230-16s120-10 160 5v51H0z"/>
-      <rect class="ground" y="132" width="390" height="30"/>
-      <path class="pivot" d="M195 96l-18 36h36z"/>
-      <g class="plank">
-        <rect class="board" x="56" y="92" width="278" height="8" rx="4"/>
-        ${figure(members[0], 290, 'who-a')}
-        ${figure(members[1], 100, 'who-b')}
-      </g>
-    </svg>
-    <div class="payers">
-      ${members.map((m, i) => `<div class="${i ? 'who-b' : 'who-a'}"><span>${esc(m.name)}</span><b>${money(paid[m.id] ?? 0)}</b></div>`).join('')}
-    </div>`;
+/* The scale: photos of a brass balance on the table by the window. Whoever paid more this month weighs their
+   side down: the first member's pan is on the right (as their name is), the second's on the left. */
+function scalePose(lean) {
+  const side = lean > 0 ? 'r' : 'l';
+  const size = Math.abs(lean);
+  return size < .08 ? '0' : `${side}${size < .35 ? 1 : 2}`;
 }
 
 function expenseScene() {
@@ -610,40 +568,34 @@ function expenseScene() {
   const isCurrent = S.month === today().slice(0, 7);
   const pair = members.length === 2;
   const lean = pair && total ? (paid[members[0].id] - paid[members[1].id]) / total : 0;
-  const angle = Math.sign(lean) * Math.sqrt(Math.abs(lean)) * SEESAW_MAX; // the root makes a small gap still visible
+  const pose = scalePose(lean);
+  // When the balance shifts, the new photo fades in over the last one.
+  const was = S.anim?.pose ?? pose;
+  const label = !pair ? 'מאזניים' : pose === '0' ? 'מאזניים מאוזנים' : `מאזניים נוטים לצד של ${esc((lean > 0 ? members[0] : members[1]).name)}`;
   return `
-    <header class="scene is-${dayPart()}">
+    <header class="scene photo">
+      ${photoFrame({ off: `images/scale-${was}.jpg`, crop: 0, end: 1075, w: 768, h: 1376, label,
+        layers: was !== pose ? `<img class="grow" src="images/scale-${pose}.jpg" alt="">` : '' })}
       ${sceneTop(S.ctx.household.name)}
       <div class="month-nav">
         <button data-action="month" data-dir="-1" aria-label="חודש קודם">›</button>
         <span>${monthLabel}</span>
         <button data-action="month" data-dir="1" aria-label="חודש הבא" ${isCurrent ? 'disabled' : ''}>‹</button>
       </div>
-      <h1 class="total" data-total="${total}" data-angle="${angle}">${money(total)}</h1>
+      <h1 class="total" data-total="${total}" data-pose="${pose}">${money(total)}</h1>
       <div class="total-note">הוצאות משותפות החודש</div>
-      ${pair ? seesaw(members, paid, total) : ''}
+      ${pair ? `<div class="payers">${members.map((m, i) => `<div class="${i ? 'who-b' : 'who-a'}"><span>${esc(m.name)}</span><b>${money(paid[m.id] ?? 0)}</b></div>`).join('')}</div>` : ''}
     </header>`;
 }
 
-// The seesaw swings to its new tilt and the total counts up, from wherever they were before.
+// The total counts up from wherever it was before.
 function animateExpenses() {
   const el = document.querySelector('.total');
-  const plank = document.querySelector('.plank');
   if (!el) return;
-  const to = { angle: Number(el.dataset.angle), total: Number(el.dataset.total) };
-  const from = S.anim ?? { angle: 0, total: 0 };
+  const to = { pose: el.dataset.pose, total: Number(el.dataset.total) };
+  const from = S.anim ?? { total: 0 };
   S.anim = to;
-  if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    if (plank) plank.style.transform = `rotate(${to.angle}deg)`;
-    return;
-  }
-  if (plank) {
-    plank.style.transform = `rotate(${from.angle}deg)`;
-    plank.getBoundingClientRect();
-    plank.classList.add('swing');
-    plank.style.transform = `rotate(${to.angle}deg)`;
-  }
-  if (from.total === to.total) return;
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches || from.total === to.total) return;
   const start = performance.now();
   const step = (now) => {
     const t = Math.min(1, (now - start) / 700);
@@ -867,7 +819,7 @@ function expenseSheet(e, draft = null) {
     </form>`);
 }
 
-const APP_VERSION = 11; // shown in settings, to tell which version a phone is running
+const APP_VERSION = 12; // shown in settings, to tell which version a phone is running
 
 function settingsSheet() {
   const h = S.ctx.household;

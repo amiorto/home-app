@@ -250,15 +250,7 @@ input, textarea { font: inherit; color: inherit; }
 .total-note { margin-top: 6px; text-align: center; color: rgba(255, 255, 255, .88); font-size: 14.5px; }
 .scene .house + .payers { margin-top: -1px; }
 .scene .total-note + .house { margin-top: 2px; }
-
-/* the seesaw */
-.board { fill: var(--lamp); }
-.pivot { fill: var(--lamp-edge); }
-.plank { transform-origin: 195px 96px; }
-.plank.swing { transition: transform .9s cubic-bezier(.3, 1.5, .5, 1); }
-.plank .body { fill: var(--who); }
-.plank .head { fill: #fff; }
-.plank text { fill: var(--on-color); font: 800 15px var(--sans); }
+.scene.photo .total-note + .payers { padding-top: 14px; }
 .payers { display: flex; justify-content: space-between; padding: 0 20px 6px; }
 .payers div { display: flex; flex-direction: column; gap: 3px; }
 .payers div.who-b { align-items: flex-end; text-align: end; }

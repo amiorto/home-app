@@ -1,7 +1,8 @@
 // Network-first: always fresh when online, cached shell when offline.
-const CACHE = 'home-app-v11';
+const CACHE = 'home-app-v12';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'store.js', 'parse.js', 'config.js', 'manifest.webmanifest', 'icons/icon-180.png', 'icons/icon-192.png', 'images/house-off.jpg', 'images/house-on.jpg', 'images/rooms-off.jpg', 'images/rooms-on.jpg',
-  'images/plant-0.jpg', 'images/plant-1.jpg', 'images/plant-2.jpg', 'images/plant-3.jpg', 'images/plant-4.jpg', 'images/plant-5.jpg'];
+  'images/plant-0.jpg', 'images/plant-1.jpg', 'images/plant-2.jpg', 'images/plant-3.jpg', 'images/plant-4.jpg', 'images/plant-5.jpg',
+  'images/scale-0.jpg', 'images/scale-l1.jpg', 'images/scale-l2.jpg', 'images/scale-r1.jpg', 'images/scale-r2.jpg'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
