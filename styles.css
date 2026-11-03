@@ -74,12 +74,11 @@ input, textarea { font: inherit; color: inherit; }
 
 .hello { margin: 2px 0 0; padding: 0 20px 18px; font: 900 38px/1.08 var(--display); letter-spacing: -.01em; }
 
-/* ---------- the house ---------- */
+/* ---------- the scene: a photo behind each screen ---------- */
 .scene {
-  --room-glass: #22305a; --room-light: #ffd466; --room-things: #d8922a;
   position: fixed; inset: 0; z-index: 0; overflow: hidden; color: #fff;
   padding-top: env(safe-area-inset-top);
-  background: linear-gradient(var(--sky-top), var(--sky-low) var(--art-h, 50%), var(--ground) var(--art-h, 50%), color-mix(in srgb, var(--ground) 62%, #000) 100%);
+  background: #0f1f45;
 }
 /* the page scrolls over the fixed scene, on frosted cards */
 #app > .scene + * { margin-top: calc(var(--scene-h, 0px) + 12px); }
@@ -103,40 +102,10 @@ input, textarea { font: inherit; color: inherit; }
 .scene ~ .tabbar { background: color-mix(in srgb, var(--sheet) 88%, transparent); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); border-top-color: transparent; }
 .scene-top, .scene .hello, .scene-line, .month-nav, .total, .total-note, .payers { opacity: var(--fade, 1); }
 .scene::after { content: ""; position: absolute; inset: 0; background: #080e24; opacity: var(--dim, 0); pointer-events: none; }
-.stars { display: none; fill: #fff; }
-.is-night .stars { display: block; }
-.glow { opacity: 0; transition: opacity .6s ease-out; }
-.room.on .glow { opacity: 1; }
-.depth { pointer-events: none; }
 .scene-top { display: flex; justify-content: space-between; align-items: center; padding: 14px 20px 0; }
 .scene .date, .scene .icon-btn { color: rgba(255, 255, 255, .86); }
 .scene .hello { padding-bottom: 6px; position: relative; z-index: 1; }
 .scene-line { margin: 0; padding: 0 20px; font: 500 15px/1.3 var(--sans); color: rgba(255, 255, 255, .88); position: relative; z-index: 1; }
-.house { display: block; width: 100%; height: auto; margin-top: -26px; }
-.is-morning { --sky-top: #3d6fb5; --sky-low: #f4b78f; --sun: #fff0c9; --far: #8d9fc0; --near: #5f8b7b; --tree: #2f5d55; --wall: #f4f1ec; --wall-up: #e3e2e3; --shade: #b9bcc8; --ground: #47705f; }
-.is-noon { --sky-top: #2a6fbe; --sky-low: #a6d6ef; --sun: #fff6d8; --far: #7fa6b8; --near: #4f9a78; --tree: #20634f; --wall: #ffffff; --wall-up: #eceef2; --shade: #bcc4cf; --ground: #3d8263; }
-.is-evening { --sky-top: #2c2a6b; --sky-low: #f3905f; --sun: #ffd9a0; --far: #6a4f80; --near: #3f4a6c; --tree: #232a4c; --wall: #d9cdd0; --wall-up: #bfb3bd; --shade: #7f7690; --ground: #2f3a5a; }
-.is-night { --sky-top: #0b1330; --sky-low: #2b3a6e; --sun: #e9edf8; --far: #1f2b57; --near: #18224a; --tree: #0d1531; --wall: #4a5580; --wall-up: #3c4670; --shade: #232c55; --ground: #141c3e; --room-glass: #141c3c; --frame: #4a5a95; }
-.sun { fill: var(--sun); }
-.hill-far { fill: url(#hillFar); }
-.hill-near { fill: url(#hillNear); }
-.tree { fill: var(--tree); }
-.wall { fill: var(--wall); }
-.wall-up { fill: var(--wall-up); }
-.shade { fill: var(--shade); }
-.ground { fill: var(--ground); }
-.frame { fill: var(--frame, #18264f); }
-.house.flush { margin-top: 10px; }
-.rail { fill: none; stroke: var(--frame, #18264f); stroke-width: 1.4; }
-.pool { opacity: .9; }
-.glass { fill: var(--room-glass); }
-.mullion { stroke: #18264f; stroke-width: 1.2; }
-.room .light { opacity: 0; transition: opacity .5s ease-out; }
-.room .light > rect { fill: var(--room-light); }
-.things { fill: var(--room-things); stroke: var(--room-things); stroke-width: 1.5; }
-.spill { fill: var(--room-light); opacity: 0; transition: opacity .5s ease-out; }
-.room.on .light { opacity: 1; }
-.room.on .spill { opacity: .32; }
 
 .sec-row { display: flex; justify-content: space-between; align-items: center; }
 .sec-row button { font: 500 14px/1 var(--sans); color: var(--ink-2); text-decoration: underline; text-underline-offset: 3px; padding: 6px 0; }
@@ -248,8 +217,6 @@ input, textarea { font: inherit; color: inherit; }
 .month-nav button:disabled { opacity: .35; box-shadow: none; }
 .total { margin: 16px 0 0; padding: 0 20px; text-align: center; font: 900 50px/1 var(--display); letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
 .total-note { margin-top: 6px; text-align: center; color: rgba(255, 255, 255, .88); font-size: 14.5px; }
-.scene .house + .payers { margin-top: -1px; }
-.scene .total-note + .house { margin-top: 2px; }
 .scene.photo .total-note + .payers { padding-top: 14px; }
 .payers { display: flex; justify-content: space-between; padding: 0 20px 6px; }
 .payers div { display: flex; flex-direction: column; gap: 3px; }
@@ -441,7 +408,6 @@ input, textarea { font: inherit; color: inherit; }
 }
 
 /* ---------- photo scenes ---------- */
-.scene.photo { background: #0f1f45; }
 .photo-bg { position: absolute; inset: 0; overflow: hidden; }
 /* the photo from its crop line down, covering the screen and pinned to the top */
 .photo-frame { position: absolute; top: 0; left: 50%; transform: translateX(-50%); }

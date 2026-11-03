@@ -197,22 +197,13 @@ function render() {
   else S.anim = null;
 }
 
-// The scene is a fixed backdrop; the page starts just below its picture and scrolls over the rest.
+// The scene is a fixed backdrop photo; the page starts at the photo's `end` line and scrolls over the rest.
 function fitScene() {
   const photo = document.querySelector('.scene .photo-frame');
-  // On a photo the page starts at the pool; elsewhere just below the scene's picture.
-  const last = photo ? null : document.querySelector('.scene')?.lastElementChild;
-  if (photo) {
-    const box = photo.getBoundingClientRect();
-    const crop = Number(photo.dataset.crop);
-    const scale = box.height / (photo.dataset.h - crop);
-    document.documentElement.style.setProperty('--scene-h', `${Math.round((photo.dataset.end - crop) * scale)}px`);
-    return;
-  }
-  if (!last) return;
-  const root = document.documentElement.style;
-  root.setProperty('--scene-h', `${Math.round(last.getBoundingClientRect().bottom)}px`);
-  root.setProperty('--art-h', `${Math.round(document.querySelector('.scene .house')?.getBoundingClientRect().bottom ?? 0) - 1}px`);
+  if (!photo) return;
+  const crop = Number(photo.dataset.crop);
+  const scale = photo.getBoundingClientRect().height / (photo.dataset.h - crop);
+  document.documentElement.style.setProperty('--scene-h', `${Math.round((photo.dataset.end - crop) * scale)}px`);
 }
 addEventListener('resize', fitScene);
 // As the page scrolls, the scene's words fade and its picture dims, so nothing collides with the cards.
@@ -822,7 +813,7 @@ function expenseSheet(e, draft = null) {
     </form>`);
 }
 
-const APP_VERSION = 13; // shown in settings, to tell which version a phone is running
+const APP_VERSION = 14; // shown in settings, to tell which version a phone is running
 
 /* Notifications: the phone subscribes here; a Supabase function sends them (supabase/functions/notify). */
 const canPush = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
