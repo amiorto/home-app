@@ -202,7 +202,7 @@ function fitScene() {
   if (photo) {
     const box = photo.getBoundingClientRect();
     const crop = Number(photo.dataset.crop);
-    const scale = box.height / (PHOTO_H - crop);
+    const scale = box.height / (photo.dataset.h - crop);
     document.documentElement.style.setProperty('--scene-h', `${Math.round((photo.dataset.end - crop) * scale)}px`);
     return;
   }
@@ -297,16 +297,16 @@ function houseScene(dateLine) {
     </header>`;
 }
 
-/* Photo scenes. Each is a pair of matching photos, 941 × 1672: the "off" one fills the screen and parts of the
-   "on" one show through on top. The frame shows the photo from `crop` px down; the page starts at `end`. */
+/* Photo scenes. Each is a pair of matching photos, 941 × 1672 unless said otherwise: the "off" one fills the screen
+   and parts of the "on" one show through on top. The frame shows the photo from `crop` px down; the page starts at `end`. */
 const PHOTO_W = 941;
 const PHOTO_H = 1672;
 
-function photoFrame({ off, crop, end, label, layers }) {
-  const h = PHOTO_H - crop;
+function photoFrame({ off, crop, end, label, layers, w = PHOTO_W, h: full = PHOTO_H }) {
+  const h = full - crop;
   return `
     <div class="photo-bg" role="img" aria-label="${label}">
-      <div class="photo-frame" data-crop="${crop}" data-end="${end}" style="--top:${(-crop / h * 100).toFixed(3)}%;aspect-ratio:${PHOTO_W}/${h};height:max(100%, calc(100vw * ${h} / ${PHOTO_W}))">
+      <div class="photo-frame" data-crop="${crop}" data-end="${end}" data-h="${full}" style="--top:${(-crop / h * 100).toFixed(3)}%;aspect-ratio:${w}/${h};height:max(100%, calc(100vw * ${h} / ${w}))">
         <img src="${off}" alt="">${layers}
       </div>
     </div>`;
@@ -386,8 +386,8 @@ function homeScene() {
 
 /* The Personal screen: a pot that grows with every day you kept a habit. It stops when you stop, but never wilts. */
 
+// Days of habits needed for each stage; images/plant-N.jpg is the same windowsill with stage N's plant.
 const PLANT_STAGES = [0, 3, 7, 14, 30, 60];
-const STEM_HEIGHTS = [0, 20, 40, 62, 84, 100];
 
 function plantProgress() {
   const days = new Set(S.data.habit_checks.map((c) => c.day)).size;
@@ -395,45 +395,20 @@ function plantProgress() {
   return { days, stage, next: PLANT_STAGES[stage + 1] };
 }
 
-function plantSvg(stage, grew) {
-  const stemH = STEM_HEIGHTS[stage];
-  const top = 122 - stemH;
-  const leaves = Array.from({ length: stage * 2 }, (_, i) => {
-    const y = 118 - (i + 1) * (stemH / (stage * 2 + 1));
-    const dir = i % 2 ? -1 : 1;
-    const size = 16 + stage * 2 - i;
-    return `<path class="leaf ${grew && i >= (stage - 1) * 2 ? 'new' : ''}" style="animation-delay:${(i % 2) * 90}ms" d="M195 ${y}c${dir * size * .4} ${-size * .8} ${dir * size * 1.1} ${-size * .8} ${dir * size * 1.5} ${-size * .3}c${-dir * size * .3} ${size * .7} ${-dir * size} ${size * .8} ${-dir * size * 1.5} ${size * .3}z"/>`;
-  }).join('');
-  const petals = Array.from({ length: 6 }, (_, i) => `<ellipse class="petal" cx="195" cy="${top - 14}" rx="6" ry="11" transform="rotate(${i * 60} 195 ${top - 3})"/>`).join('');
-  const flower = stage === PLANT_STAGES.length - 1 ? `<g class="bloom ${grew ? 'new' : ''}">${petals}<circle class="heart" cx="195" cy="${top - 3}" r="6"/></g>` : '';
-  const sprout = stage ? `<rect class="stem" x="193.5" y="${top}" width="3" height="${stemH}" rx="1.5"/>` : '<ellipse class="seed" cx="195" cy="120" rx="8" ry="4"/>';
-  return `${sprout}${leaves}${flower}`;
-}
-
 function plantScene() {
   const { days, stage, next } = plantProgress();
-  const grew = S.plantStage !== undefined && stage > S.plantStage;
+  // On growing, the new stage's photo fades in over the last one.
+  const was = S.plantStage ?? stage;
   S.plantStage = stage;
   const line = !next ? 'העציץ שלך פורח' : !days ? 'סמן הרגל, והעציץ יתחיל לצמוח' : `עוד ${next - days} ימי הרגלים לשלב הבא`;
   const open = S.data.tasks.filter((t) => t.kind === 'task' && !t.household_id && !t.done_at).length;
   return `
-    <header class="scene is-${dayPart()}">
+    <header class="scene photo">
+      ${photoFrame({ off: `images/plant-${Math.min(was, stage)}.jpg`, crop: 0, end: 990, w: 768, h: 1376,
+        label: `עציץ בשלב ${stage + 1} מתוך ${PLANT_STAGES.length}`, layers: was < stage ? `<img class="grow" src="images/plant-${stage}.jpg" alt="">` : '' })}
       ${sceneTop(me().name)}
       <h1 class="hello">אישי</h1>
       <p class="scene-line">${line}</p>
-      <svg class="house" viewBox="0 0 390 170" role="img" aria-label="עציץ בשלב ${stage + 1} מתוך ${PLANT_STAGES.length}">
-        ${ART_DEFS}
-        <circle class="sun" cx="70" cy="44" r="18"/>
-        <path class="hill-far" d="M0 120c60-30 120-15 190-22s130-23 200 2v70H0z"/>
-        <path class="hill-near" d="M0 140c80-25 150-10 230-16s120-10 160 5v41H0z"/>
-        <rect class="ground" y="158" width="390" height="12"/>
-        ${plantSvg(stage, grew)}
-        <ellipse cx="195" cy="161" rx="58" ry="5" fill="#000" opacity=".35" filter="url(#soft)"/>
-        <path class="pot" d="M168 120h54l-6 40h-42z"/>
-        <path d="M168 120h54l-6 40h-42z" fill="url(#clay)"/>
-        <rect class="pot-rim" x="164" y="116" width="62" height="9" rx="3"/>
-        <rect x="164" y="116" width="62" height="9" rx="3" fill="url(#clay)"/>
-      </svg>
       <div class="payers">
         <div><span>ימי הרגלים</span><b>${days}</b></div>
         <div class="who-b"><span>משימות פתוחות</span><b>${open}</b></div>
@@ -892,7 +867,7 @@ function expenseSheet(e, draft = null) {
     </form>`);
 }
 
-const APP_VERSION = 10; // shown in settings, to tell which version a phone is running
+const APP_VERSION = 11; // shown in settings, to tell which version a phone is running
 
 function settingsSheet() {
   const h = S.ctx.household;

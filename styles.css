@@ -141,17 +141,6 @@ input, textarea { font: inherit; color: inherit; }
 .sec-row { display: flex; justify-content: space-between; align-items: center; }
 .sec-row button { font: 500 14px/1 var(--sans); color: var(--ink-2); text-decoration: underline; text-underline-offset: 3px; padding: 6px 0; }
 
-/* the pot (Personal) */
-.stem { fill: #2f8a5c; }
-.leaf { fill: url(#leaf); }
-.seed { fill: #6b4a2e; }
-.pot { fill: var(--who); }
-.pot-rim { fill: color-mix(in srgb, var(--who) 82%, #000); }
-.petal { fill: var(--lamp); }
-.heart { fill: var(--lamp-edge); }
-.leaf.new, .bloom.new { transform-box: fill-box; transform-origin: center bottom; animation: sprout .55s cubic-bezier(.3, 1.5, .5, 1) backwards; }
-@keyframes sprout { from { transform: scale(0); } }
-
 .demo-bar {
   margin: 14px 16px 0; padding: 6px 6px 6px 14px; padding-inline: 14px 6px; border-radius: 999px; background: var(--plaster);
   display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--ink-2);
@@ -484,3 +473,6 @@ input, textarea { font: inherit; color: inherit; }
 }
 .cell-name b { display: grid; place-items: center; min-width: 17px; height: 17px; border-radius: 9px; background: var(--lamp); color: var(--on-lamp); font: 800 11px/1 var(--sans); }
 .scene.photo .payers { padding-top: 10px; }
+.photo-frame .grow { animation: grow 1.6s ease-in-out .3s backwards; }
+@keyframes grow { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .photo-frame .grow { animation: none; } }
