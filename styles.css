@@ -138,21 +138,6 @@ input, textarea { font: inherit; color: inherit; }
 .room.on .light { opacity: 1; }
 .room.on .spill { opacity: .32; }
 
-/* the house cut open (Home) */
-.cell { cursor: pointer; }
-.cell .light { opacity: 0; transition: opacity .5s ease-out; }
-.cell .light > rect { fill: var(--wall); }
-.cell .light > .floor { fill: var(--thing); opacity: .35; }
-.cell .things { fill: #3a4a78; stroke: none; transition: fill .5s; }
-.cell.on .light { opacity: 1; }
-.cell.on .things { fill: var(--thing); }
-.cell:active .light > rect, .cell:active .glass { filter: brightness(.9); }
-.cell-name { fill: #dfe5f7; font: 600 11.5px var(--sans); transition: fill .5s; }
-.cell.on .cell-name { fill: #18264f; }
-.badge circle { fill: var(--lamp); }
-.badge text { fill: var(--on-lamp); font: 800 12px var(--sans); }
-.outline { fill: none; stroke: transparent; stroke-width: 3; }
-.cell.picked .outline { stroke: #fff; }
 .sec-row { display: flex; justify-content: space-between; align-items: center; }
 .sec-row button { font: 500 14px/1 var(--sans); color: var(--ink-2); text-decoration: underline; text-underline-offset: 3px; padding: 6px 0; }
 
@@ -477,10 +462,25 @@ input, textarea { font: inherit; color: inherit; }
 /* ---------- photo scenes ---------- */
 .scene.photo { background: #0f1f45; }
 .photo-bg { position: absolute; inset: 0; overflow: hidden; }
-/* the photo from 280px down, covering the screen and pinned to the top */
-.photo-frame { position: absolute; top: 0; left: 50%; height: max(100%, calc(100vw * 1392 / 941)); aspect-ratio: 941 / 1392; transform: translateX(-50%); }
-.photo-frame img { position: absolute; left: 0; top: -20.115%; width: 100%; height: auto; display: block; }
+/* the photo from its crop line down, covering the screen and pinned to the top */
+.photo-frame { position: absolute; top: 0; left: 50%; transform: translateX(-50%); }
+.photo-frame img { position: absolute; left: 0; top: var(--top); width: 100%; height: auto; display: block; }
 .photo-bg .room { opacity: 0; transition: opacity .8s ease-out; }
 .photo-bg .room.on { opacity: 1; }
 .scene.photo::before { content: ""; position: absolute; inset: 0 0 auto; height: 260px; background: linear-gradient(rgba(6, 14, 40, .45), transparent); pointer-events: none; }
 .scene.photo > :not(.photo-bg) { position: relative; }
+.photo-frame .cell { position: absolute; inset: 0; pointer-events: none; }
+.photo-frame .cell img { opacity: 0; transition: opacity .8s ease-out; }
+.photo-frame .cell.on img { opacity: 1; }
+.cell-btn {
+  position: absolute; pointer-events: auto; display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 6px; border-radius: 4px; transition: box-shadow .2s;
+}
+.cell.picked .cell-btn { box-shadow: inset 0 0 0 3px #fff; }
+.cell-name {
+  display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border-radius: 999px;
+  background: rgba(8, 14, 36, .55); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  color: #fff; font: 600 11.5px/1 var(--sans); white-space: nowrap;
+}
+.cell-name b { display: grid; place-items: center; min-width: 17px; height: 17px; border-radius: 9px; background: var(--lamp); color: var(--on-lamp); font: 800 11px/1 var(--sans); }
+.scene.photo .payers { padding-top: 10px; }

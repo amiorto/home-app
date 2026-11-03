@@ -201,8 +201,9 @@ function fitScene() {
   const last = photo ? null : document.querySelector('.scene')?.lastElementChild;
   if (photo) {
     const box = photo.getBoundingClientRect();
-    const scale = box.height / 1392;
-    document.documentElement.style.setProperty('--scene-h', `${Math.round((POOL[0] - 280) * scale)}px`);
+    const crop = Number(photo.dataset.crop);
+    const scale = box.height / (PHOTO_H - crop);
+    document.documentElement.style.setProperty('--scene-h', `${Math.round((photo.dataset.end - crop) * scale)}px`);
     return;
   }
   if (!last) return;
@@ -283,24 +284,43 @@ function houseScene(dateLine) {
   const lit = roomsLit(done, total);
   const left = total - done;
   const line = !total ? 'אין כלום להיום, הבית מואר' : !left ? 'סיימת הכל, הבית מואר' : left === 1 ? 'עוד דבר אחד להיום' : `עוד ${left} דברים להיום`;
-  // Plain <img> layers cut with clip-path polygons (in % of the photo): Safari draws these reliably,
-  // unlike SVG <image> with clipPath. A downstairs window's polygon also takes in its strip of pool.
-  const pct = (v, of) => `${((v / of) * 100).toFixed(2)}%`;
   const rooms = ROOMS.map(([x, y, w, h], i) => {
-    const [l, r, t, b] = [pct(x - 6, 941), pct(x + w + 6, 941), pct(y - 6, 1672), pct(y + h + 6, 1672)];
-    const pool = i >= 3 ? `, ${l} ${b}, ${l} ${pct(POOL[0], 1672)}, ${r} ${pct(POOL[0], 1672)}, ${r} ${pct(POOL[0] + POOL[1], 1672)}, ${l} ${pct(POOL[0] + POOL[1], 1672)}` : '';
-    const clip = `polygon(${l} ${t}, ${r} ${t}, ${r} ${b}, ${l} ${b}${pool})`;
-    return `<img class="room ${i < lit ? 'on' : ''}" src="images/house-on.jpg" alt="" style="-webkit-clip-path:${clip};clip-path:${clip}">`;
+    const rects = [[x - 6, y - 6, w + 12, h + 12], ...(i >= 3 ? [[x - 6, POOL[0], w + 12, POOL[1]]] : [])];
+    return `<img class="room ${i < lit ? 'on' : ''}" src="images/house-on.jpg" alt="" style="${clipStyle(rects)}">`;
   }).join('');
   return `
     <header class="scene photo">
-      <div class="photo-bg" role="img" aria-label="בית שבו ${lit} מתוך ${ROOMS.length} חדרים מוארים">
-        <div class="photo-frame"><img src="images/house-off.jpg" alt="">${rooms}</div>
-      </div>
+      ${photoFrame({ off: 'images/house-off.jpg', crop: 280, end: POOL[0], label: `בית שבו ${lit} מתוך ${ROOMS.length} חדרים מוארים`, layers: rooms })}
       ${sceneTop(dateLine)}
       <h1 class="hello">${greeting()},<br>${esc(me().name)}</h1>
       <p class="scene-line">${line}</p>
     </header>`;
+}
+
+/* Photo scenes. Each is a pair of matching photos, 941 × 1672: the "off" one fills the screen and parts of the
+   "on" one show through on top. The frame shows the photo from `crop` px down; the page starts at `end`. */
+const PHOTO_W = 941;
+const PHOTO_H = 1672;
+
+function photoFrame({ off, crop, end, label, layers }) {
+  const h = PHOTO_H - crop;
+  return `
+    <div class="photo-bg" role="img" aria-label="${label}">
+      <div class="photo-frame" data-crop="${crop}" data-end="${end}" style="--top:${(-crop / h * 100).toFixed(3)}%;aspect-ratio:${PHOTO_W}/${h};height:max(100%, calc(100vw * ${h} / ${PHOTO_W}))">
+        <img src="${off}" alt="">${layers}
+      </div>
+    </div>`;
+}
+
+// Plain <img> layers cut with clip-path polygons (in % of the photo): Safari draws these reliably, unlike SVG
+// <image> with clipPath. Rects stacked in one column join into one polygon through a zero-width seam.
+function clipStyle(rects) {
+  const pct = (v, of) => `${((v / of) * 100).toFixed(2)}%`;
+  const pts = rects.flatMap(([x, y, w, h]) => {
+    const [l, r, t, b] = [pct(x, PHOTO_W), pct(x + w, PHOTO_W), pct(y, PHOTO_H), pct(y + h, PHOTO_H)];
+    return [`${l} ${t}`, `${r} ${t}`, `${r} ${b}`, `${l} ${b}`];
+  }).join(', ');
+  return `-webkit-clip-path:polygon(${pts});clip-path:polygon(${pts})`;
 }
 
 // A rolling week (the last 7 days), so the bar isn't empty every Sunday morning.
@@ -322,20 +342,16 @@ function weekCounts() {
 
 /* The Home screen: the house cut open. A room with chores waiting is dark; finish them and its light comes on. */
 
+// Each room in the cutaway photo's pixels: x, y, width, height.
 const CELLS = [
-  { id: 'bedroom', wall: '#ffe0b0', thing: '#c9743f', name: 'חדר שינה', x: 30, y: 40, w: 135, h: 80, words: ['מצעים', 'מיטה', 'ארון', 'שינה'],
-    things: '<rect x="62" y="96" width="78" height="16" rx="3"/><rect x="134" y="84" width="8" height="28"/><rect x="112" y="90" width="22" height="7" rx="3"/>' },
-  { id: 'bath', wall: '#c9ecef', thing: '#3d8fa0', name: 'אמבטיה', x: 165, y: 40, w: 135, h: 80, words: ['אמבטיה', 'מקלחת', 'שירותים', 'אסלה', 'מראה'],
-    things: '<path d="M186 96h70v6a10 10 0 0 1-10 10h-50a10 10 0 0 1-10-10z"/><rect x="194" y="74" width="3" height="22"/><rect x="194" y="72" width="14" height="3"/><rect x="270" y="72" width="16" height="26" rx="8"/>' },
-  { id: 'balcony', wall: '#dff0d0', thing: '#4f9a5b', name: 'מרפסת', x: 300, y: 60, w: 72, h: 60, words: ['עציץ', 'עציצים', 'צמחים', 'מרפסת', 'גינה', 'להשקות'],
-    things: '<path d="M326 120l-3-14h16l-3 14z"/><path d="M331 106c-8-6-10-16-6-24 5 5 8 14 6 24zm0 0c7-5 10-13 8-21-5 4-8 12-8 21z"/><path d="M354 120l-2-9h12l-2 9z"/><path d="M358 111c-5-4-6-10-4-15 3 3 5 9 4 15z"/>' },
-  { id: 'living', wall: '#ffd2a6', thing: '#c2583f', name: 'סלון', x: 30, y: 124, w: 120, h: 80, words: ['סלון', 'ספה', 'אבק', 'שטיח', 'טלוויזיה', 'מדף'],
-    things: '<path d="M48 204v-20h64v20zM42 186h8v18h-8zM110 186h8v18h-8z"/><rect x="130" y="160" width="2" height="44"/><path d="M125 162l3-12h6l3 12z"/>' },
-  { id: 'kitchen', wall: '#fff0bd', thing: '#cf9420', name: 'מטבח', x: 150, y: 124, w: 115, h: 80, words: ['מטבח', 'מקרר', 'כלים', 'מדיח', 'תנור', 'כיריים', 'שיש', 'זבל', 'מיקרו'],
-    things: '<rect x="160" y="178" width="95" height="26"/><path d="M198 144h20l6 12h-32z"/>' },
-  { id: 'other', wall: '#e3dcf6', thing: '#7a5cc7', name: 'שאר הבית', x: 265, y: 124, w: 107, h: 80, words: [],
-    things: '<rect x="284" y="170" width="34" height="34" rx="3"/><path d="M330 204l-3-22h26l-3 22z"/>' },
+  { id: 'bedroom', name: 'חדר שינה', x: 80, y: 576, w: 300, h: 249, words: ['מצעים', 'מיטה', 'ארון', 'שינה'] },
+  { id: 'bath', name: 'אמבטיה', x: 401, y: 576, w: 160, h: 249, words: ['אמבטיה', 'מקלחת', 'שירותים', 'אסלה', 'מראה'] },
+  { id: 'balcony', name: 'מרפסת', x: 582, y: 576, w: 307, h: 249, words: ['עציץ', 'עציצים', 'צמחים', 'מרפסת', 'גינה', 'להשקות'] },
+  { id: 'living', name: 'סלון', x: 80, y: 862, w: 353, h: 286, words: ['סלון', 'ספה', 'אבק', 'שטיח', 'טלוויזיה', 'מדף'] },
+  { id: 'kitchen', name: 'מטבח', x: 455, y: 862, w: 222, h: 286, words: ['מטבח', 'מקרר', 'כלים', 'מדיח', 'תנור', 'כיריים', 'שיש', 'זבל', 'מיקרו'] },
+  { id: 'other', name: 'שאר הבית', x: 698, y: 862, w: 171, h: 286, words: [] },
 ];
+const ROOMS_CROP = 100;
 
 const roomOf = (c) => c.room ?? CELLS.find((r) => r.words.some((w) => c.title.includes(w)))?.id ?? 'other';
 const roomName = (id) => CELLS.find((r) => r.id === id)?.name;
@@ -344,43 +360,26 @@ const waitingIn = (room) => S.data.chores.filter((c) => roomOf(c) === room && ch
 function homeScene() {
   const waiting = CELLS.filter((r) => waitingIn(r.id)).length;
   const line = !S.data.chores.length ? 'הוסיפו מטלות, וכל מטלה תמצא את החדר שלה' : !waiting ? 'כל החדרים מוארים' : waiting === 1 ? 'חדר אחד מחכה לך' : `${waiting} חדרים מחכים לך`;
+  const h = PHOTO_H - ROOMS_CROP;
+  const pos = (r) => `left:${(r.x / PHOTO_W * 100).toFixed(2)}%;top:${((r.y - ROOMS_CROP) / h * 100).toFixed(2)}%;width:${(r.w / PHOTO_W * 100).toFixed(2)}%;height:${(r.h / h * 100).toFixed(2)}%`;
+  // Per room: the lit photo cut to its walls, and a button over it with its name and how many chores wait there.
   const cells = CELLS.map((r) => {
     const n = waitingIn(r.id);
     return `
-      <g class="cell ${n ? '' : 'on'} ${S.room === r.id ? 'picked' : ''}" style="--wall:${r.wall};--thing:${r.thing}" data-action="room" data-room="${r.id}" role="button" aria-label="${r.name}${n ? `, ${n} מטלות מחכות` : ''}">
-        <rect class="glass" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}"/>
-        <g class="light"><rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}"/><rect class="floor" x="${r.x}" y="${r.y + r.h - 5}" width="${r.w}" height="5"/></g>
-        <g class="things">${r.things}</g>
-        <rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" fill="url(#roomDepth)" pointer-events="none"/>
-        <text class="cell-name" x="${r.x + r.w / 2 + (n && r.w < 90 ? 10 : 0)}" y="${r.y + 15}" text-anchor="middle">${r.name}</text>
-        ${n ? `<g class="badge"><circle cx="${r.x + 13}" cy="${r.y + 13}" r="9"/><text x="${r.x + 13}" y="${r.y + 17}" text-anchor="middle">${n}</text></g>` : ''}
-        <rect class="outline" x="${r.x + 1.5}" y="${r.y + 1.5}" width="${r.w - 3}" height="${r.h - 3}"/>
-      </g>`;
+      <div class="cell ${n ? '' : 'on'} ${S.room === r.id ? 'picked' : ''}" data-room="${r.id}">
+        <img src="images/rooms-on.jpg" alt="" style="${clipStyle([[r.x, r.y, r.w, r.h]])}">
+        <button class="cell-btn" data-action="room" data-room="${r.id}" style="${pos(r)}" aria-label="${r.name}${n ? `, ${n} מטלות מחכות` : ''}">
+          <span class="cell-name">${n ? `<b>${n}</b>` : ''}${r.name}</span>
+        </button>
+      </div>`;
   }).join('');
   const counts = weekCounts();
   return `
-    <header class="scene is-${dayPart()}">
+    <header class="scene photo">
+      ${photoFrame({ off: 'images/rooms-off.jpg', crop: ROOMS_CROP, end: 1160, label: 'חתך של הבית', layers: cells })}
       ${sceneTop(S.ctx.household.name)}
       <h1 class="hello">הבית</h1>
       <p class="scene-line">${line}</p>
-      <svg class="house flush" viewBox="0 0 390 226" role="group" aria-label="חתך של הבית">
-        ${ART_DEFS}
-        <circle class="sun" cx="338" cy="26" r="16"/>
-        <path class="hill-far" d="M0 160c60-30 120-15 190-22s130-23 200 2v86H0z"/>
-        <path class="hill-near" d="M0 186c80-25 150-10 230-16s120-10 160 5v51H0z"/>
-        <path class="tree" d="M12 204c-5-18-4-44 3-64 7 20 8 46 3 64z"/>
-        <rect class="ground" y="204" width="390" height="22"/>
-        ${cells}
-        <rect class="frame" x="22" y="32" width="286" height="8"/>
-        <rect class="frame" x="24" y="40" width="6" height="164"/>
-        <rect class="frame" x="24" y="120" width="352" height="4"/>
-        <rect class="frame" x="372" y="124" width="4" height="80"/>
-        <rect class="frame" x="298" y="40" width="4" height="84"/>
-        <rect class="frame" x="163" y="40" width="3" height="80"/>
-        <rect class="frame" x="148" y="124" width="3" height="80"/>
-        <rect class="frame" x="264" y="124" width="3" height="80"/>
-        <path class="rail" d="M302 92h74v28M314 92v28M326 92v28M338 92v28M350 92v28M362 92v28"/>
-      </svg>
       ${S.ctx.members.length === 2 ? `<div class="payers">${S.ctx.members.map((m, i) => `<div class="${i ? 'who-b' : 'who-a'}"><span>${esc(m.name)}, השבוע</span><b>${counts[m.id] ?? 0}</b></div>`).join('')}</div>` : ''}
     </header>`;
 }
@@ -893,7 +892,7 @@ function expenseSheet(e, draft = null) {
     </form>`);
 }
 
-const APP_VERSION = 9; // shown in settings, to tell which version a phone is running
+const APP_VERSION = 10; // shown in settings, to tell which version a phone is running
 
 function settingsSheet() {
   const h = S.ctx.household;
