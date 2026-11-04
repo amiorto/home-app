@@ -4,7 +4,7 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 
 // Tables shared by the household vs. private to each user.
-export const SHARED_TABLES = ['chores', 'chore_log', 'expenses'];
+export const SHARED_TABLES = ['chores', 'chore_log', 'expenses', 'shopping'];
 export const PERSONAL_TABLES = ['tasks', 'habit_checks'];
 
 export function uid() {
@@ -83,14 +83,28 @@ function seedDemo() {
       exp(356.9, 'סופר', 'סופר', partner, d(8)),
       exp(64, 'נורות ומטאטא', 'כללי', partner, d(9)),
     ],
+    shopping: demoShopping(hh, me, partner, iso, day),
   };
+}
+
+// The shopping list: a few things to buy, and a few bought lately (they show as "bought lately").
+function demoShopping(hh, me, partner, iso, day) {
+  const item = (title, category, by, boughtDaysAgo = null) => ({
+    id: uid(), household_id: hh.id, title, category, created_by: by.id, created_at: iso(day * 3),
+    bought_at: boughtDaysAgo == null ? null : iso(boughtDaysAgo * day), bought_by: boughtDaysAgo == null ? null : by.id,
+  });
+  return [
+    item('חלב', 'סופר', me), item('ביצים', 'סופר', partner), item('עגבניות', 'סופר', me), item('נורה למטבח', 'כללי', partner),
+    item('לחם', 'סופר', me, 2), item('קפה', 'סופר', partner, 5), item('נייר טואלט', 'סופר', me, 8),
+  ];
 }
 
 function createDemoStore() {
   let db;
   try { db = JSON.parse(localStorage.getItem(DEMO_KEY)); } catch { db = null; }
   if (!db) db = seedDemo();
-  const save = () => { try { localStorage.setItem(DEMO_KEY, JSON.stringify(db)); } catch {} };
+  db.shopping ??= demoShopping(db.household, db.profiles[0], db.profiles[1], (ms) => new Date(Date.now() - ms).toISOString(), 86400000); // saved before shopping existed
+  const save =() => { try { localStorage.setItem(DEMO_KEY, JSON.stringify(db)); } catch {} };
   save();
   const listeners = new Set();
   const me = () => db.profiles.find((p) => p.id === db.currentUserId);
@@ -177,16 +191,19 @@ async function createCloudStore() {
     async joinHousehold(code) { ok(await sb.rpc('join_household', { p_code: code })); },
     async loadAll() {
       const since = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
-      const [chores, chore_log, expenses, tasks, habit_checks] = await Promise.all([
+      const boughtSince = new Date(Date.now() - 60 * 86400000).toISOString();
+      const [chores, chore_log, expenses, tasks, habit_checks, shopping] = await Promise.all([
         sb.from('chores').select('*').order('created_at').then(ok),
         sb.from('chore_log').select('*').order('done_at', { ascending: false }).limit(300).then(ok),
         sb.from('expenses').select('*').order('spent_on', { ascending: false }).then(ok),
         // RLS returns my own tasks plus the household's shared home tasks.
         sb.from('tasks').select('*').order('created_at').then(ok),
         sb.from('habit_checks').select('*').eq('user_id', ctx.user.id).gte('day', since).then(ok),
+        // Everything still to buy, plus the last two months of bought things for "bought lately".
+        sb.from('shopping').select('*').or(`bought_at.is.null,bought_at.gte.${boughtSince}`).order('created_at').then(ok),
       ]);
       for (const e of expenses) e.amount = Number(e.amount);
-      return { chores, chore_log, expenses, tasks, habit_checks };
+      return { chores, chore_log, expenses, tasks, habit_checks, shopping };
     },
     async insert(table, row) {
       const full = { ...row };

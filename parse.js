@@ -1,5 +1,5 @@
 // Rule-based Hebrew parser for quick add: turns one free sentence (typed or dictated) into
-// an expense, a recurring home chore, a habit or a task. Runs on the phone, no network, no AI.
+// an expense, a recurring home chore, a habit, shopping items or a task. Runs on the phone, no network, no AI.
 //   "הוצאתי 400 שקל על צבע טמבור"   → expense ₪400 · "צבע טמבור" · כללי · paid by me
 //   "להשקות עציצים כל יום"           → home chore every 1 day
 //   "לקבוע תור לרופא מחר"            → personal task (health) due tomorrow
@@ -111,6 +111,26 @@ function categoryFor(text) {
   return 'כללי';
 }
 
+/* Shopping: "לקנות חלב, ביצים ולחם" → three items. Most of what a couple buys is groceries, so an item goes under
+   "סופר" unless it reads like something for the house or from another kind of shop. */
+const SHOPPING_RE = /^(?:(?:אני |אנחנו )?(?:צריך|צריכה|צריכים) )?(?:לקנות|קניות:?|רשימת קניות:?|חסר|חסרה|חסרים|נגמר|נגמרה|נגמרו)(?:\s|$)/;
+const GENERAL_WORDS = ['נורה', 'נורות', 'סוללות', 'סוללה', 'מטאטא', 'מגב', 'דלי', 'ברגים', 'מברגה', 'פטיש', 'דבק', 'כבל', 'מטען', 'מתאם', 'מפצל', 'וילון', 'שטיח', 'כרית', 'שמיכה', 'מגבת', 'מגבות', 'סדין', 'מצעים', 'עציץ', 'אדמה', 'דשן', 'צבע', 'מברשת', 'מתנה', 'בגדים', 'נעליים', 'גרביים', 'כלי', 'כלים', 'סיר', 'מחבת', 'צלחות', 'כוסות', 'סכו"ם', 'קופסאות', 'תיק', 'מדף', 'ארגונית', 'ספר', 'משחק'];
+
+export const shopCategory = (title) => (has(title, GENERAL_WORDS) ? 'כללי' : 'סופר');
+
+// Splits "חלב, ביצים ולחם" into items; "ו" only joins words when the next one is at least two letters ("ופל" stays whole).
+export function shoppingItems(input) {
+  const raw = String(input).trim();
+  // "נגמר הקפה" / "חסרים העגבניות": the item comes with "ה", which a list doesn't need.
+  const ranOut = /^(?:חסר|חסרה|חסרים|נגמר|נגמרה|נגמרו)\s/.test(raw);
+  const text = raw.replace(SHOPPING_RE, '').replace(/^(את|גם)\s+/, '');
+  return text.split(/[,،\n]+|\s+וגם\s+/)
+    .flatMap((part) => (part.trim().split(/\s+/).length <= 4 ? part.split(/\s+ו(?=\S{2,})/) : [part]))
+    .map((t) => tidy(t)).filter(Boolean)
+    .map((t) => (ranOut ? t.replace(/^ה(?=\S{3,})/, '') : t))
+    .map((title) => ({ title, category: shopCategory(title) }));
+}
+
 function cleanTitle(text) {
   let s = tidy(text);
   for (const re of FILLERS) s = tidy(s.replace(re, ''));
@@ -120,7 +140,7 @@ function cleanTitle(text) {
 /**
  * @param {string} input   the sentence
  * @param {{members: {id,name}[], meId: string}} ctx
- * @param {string|null} forceKind  user override: 'task' | 'chore' | 'expense' | 'habit'
+ * @param {string|null} forceKind  user override: 'task' | 'chore' | 'expense' | 'habit' | 'shopping'
  */
 export function parseQuick(input, { members, meId }, forceKind = null) {
   const raw = tidy(input);
@@ -136,7 +156,13 @@ export function parseQuick(input, { members, meId }, forceKind = null) {
   const amt = takeAmount(text);
   // An amount plus any money cue, or a clear "I paid / I spent" even when the amount is missing.
   const isExpense = (amt.amount != null && (has(raw, EXPENSE_VERBS) || CURRENCY_RE.test(raw))) || has(raw, ['הוצאתי', 'הוצאנו', 'שילמתי', 'שילמנו', 'שילם', 'שילמה']);
-  const kind = forceKind ?? (isExpense ? 'expense' : null);
+  const kind = forceKind ?? (isExpense ? 'expense' : SHOPPING_RE.test(raw) ? 'shopping' : null);
+
+  if (kind === 'shopping') {
+    const items = shoppingItems(input);
+    Object.assign(result, { kind: 'shopping', items, title: items.map((i) => i.title).join(', ') });
+    return result;
+  }
 
   if (kind === 'expense') {
     let t = amt.text.replace(new RegExp(CURRENCY_RE.source, 'gi'), ' ');

@@ -438,3 +438,14 @@ input, textarea { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) { .photo-frame .grow { animation: none; } }
 .pref { display: flex; align-items: center; gap: 10px; font-size: 15px; }
 .pref input { width: 20px; height: 20px; flex: none; accent-color: var(--lamp-edge); }
+
+/* ---------- shopping list (Home → קניות) ---------- */
+.shop-add { display: flex; gap: 8px; margin-top: 16px; }
+.shop-add input {
+  flex: 1; min-width: 0; padding: 13px 14px; border-radius: 14px; border: 1.5px solid var(--line);
+  background: var(--sheet); font-size: 16px; outline: none;
+}
+.shop-add input:focus { border-color: var(--ink); }
+.shop-add .btn { width: 50px; padding: 0; display: grid; place-items: center; background: var(--lamp); color: var(--on-lamp); box-shadow: 0 4px 0 var(--lamp-edge); }
+.chips.recent { gap: 6px; }
+.shop-row { min-height: 54px; padding-block: 10px; }

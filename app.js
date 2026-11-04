@@ -1,6 +1,6 @@
 import { createStore, localDate } from './store.js';
 import { VAPID_PUBLIC_KEY } from './config.js';
-import { parseQuick } from './parse.js';
+import { parseQuick, shoppingItems } from './parse.js';
 
 /* ---------------- constants ---------------- */
 
@@ -38,6 +38,7 @@ const S = {
   ctx: null, // { user, profile, household, members }
   data: null,
   personalView: 'tasks',
+  homeView: 'chores', // or 'shop'
   showHomeDone: false,
   room: null, // the room picked on the Home screen, null for all of them
   expView: 'list',
@@ -532,7 +533,65 @@ function viewToday() {
     </button>`;
 }
 
+/* The shopping list, shared by the household. Ticking an item off moves it to "bought lately", where a tap puts it back. */
+const SHOP_CATEGORIES = ['סופר', 'כללי'];
+const toBuy = () => S.data.shopping.filter((i) => !i.bought_at);
+
+function shopRow(i) {
+  return swipe(`
+    <div class="row shop-row" data-action="edit-shop" data-id="${i.id}">
+      <button class="box" data-action="buy" data-id="${i.id}" aria-label="סמן שנקנה"></button>
+      <div class="row-main"><div class="row-title">${esc(i.title)}</div></div>
+    </div>`, 'buy', i.id, 'shopping', 'נקנה');
+}
+
+function viewShopping() {
+  const open = toBuy();
+  const openTitles = new Set(open.map((i) => i.title));
+  // Each thing bought lately once, newest first, unless it's already back on the list.
+  const recent = [];
+  for (const i of S.data.shopping.filter((x) => x.bought_at).sort((a, b) => b.bought_at.localeCompare(a.bought_at))) {
+    if (!openTitles.has(i.title) && !recent.some((r) => r.title === i.title)) recent.push(i);
+  }
+  return `
+    <form data-form="shop" class="shop-add">
+      <input name="title" placeholder="מה צריך לקנות? אפשר כמה, עם פסיקים" autocomplete="off" enterkeyhint="done" required>
+      <button class="btn" type="submit" aria-label="הוספה">${icon('plus')}</button>
+    </form>
+    ${open.length
+      ? SHOP_CATEGORIES.map((cat) => [cat, open.filter((i) => i.category === cat)]).filter(([, list]) => list.length)
+        .map(([cat, list]) => section(cat, `<div class="list">${list.map(shopRow).join('')}</div>`, list.length)).join('')
+      : empty('הרשימה ריקה. מה שתוסיפו כאן יופיע גם אצל בן/בת הזוג')}
+    ${recent.length ? section('קנינו לאחרונה', `<div class="chips recent">${recent.slice(0, 14).map((i) => `<button class="chip-btn" data-action="shop-again" data-id="${i.id}">+ ${esc(i.title)}</button>`).join('')}</div>`) : ''}`;
+}
+
+// Adds items by name; one bought before comes back instead of piling up a duplicate.
+async function addShopping(items) {
+  for (const { title, category } of items) {
+    if (toBuy().some((i) => i.title === title)) continue;
+    const old = S.data.shopping.find((i) => i.title === title);
+    if (old) await store.update('shopping', old.id, { bought_at: null, bought_by: null });
+    else await store.insert('shopping', { title, category, bought_at: null, bought_by: null });
+  }
+}
+
+function shopSheet(i) {
+  openSheet('עריכת פריט', `
+    <form data-form="shop-edit" data-id="${i.id}" class="stack">
+      <input name="title" value="${esc(i.title)}" required>
+      <label class="field-label">איפה קונים?</label>
+      ${chips('category', SHOP_CATEGORIES.map((c) => [c, c]), i.category)}
+      <button class="btn primary" type="submit">שמירה</button>
+      <button class="btn danger" type="button" data-action="delete" data-table="shopping" data-id="${i.id}">מחיקה מהרשימה</button>
+    </form>`);
+}
+
 function viewHome() {
+  const seg = `<div class="seg">${[['chores', 'מטלות'], ['shop', `קניות${toBuy().length ? ` ${toBuy().length}` : ''}`]].map(([id, label]) => `<button class="${S.homeView === id ? 'on' : ''}" data-action="home-view" data-view="${id}">${label}</button>`).join('')}</div>`;
+  return seg + (S.homeView === 'shop' ? viewShopping() : viewChores());
+}
+
+function viewChores() {
   const chores = sortedChores();
   const homeTasks = S.data.tasks.filter((t) => t.household_id);
   const current = homeTasks.filter(visibleNow).sort(byOpenThenDue);
@@ -900,7 +959,7 @@ function expenseSheet(e, draft = null) {
     </form>`);
 }
 
-const APP_VERSION = 15; // shown in settings, to tell which version a phone is running
+const APP_VERSION = 16; // shown in settings, to tell which version a phone is running
 
 /* Notifications: the phone subscribes here; a Supabase function sends them (supabase/functions/notify). */
 const canPush = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
@@ -960,8 +1019,8 @@ function settingsSheet() {
 /* ---------------- quick add (one sentence, typed or spoken) ---------------- */
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-const QA_KINDS = [['task', 'משימה'], ['chore', 'מטלה חוזרת'], ['expense', 'הוצאה'], ['habit', 'הרגל']];
-const QA_EXAMPLES = ['הוצאתי 400 שקל על צבע טמבור', 'להשקות עציצים כל יום', 'לקבוע תור לרופא מחר', 'אלה שילמה 120 על פיצה'];
+const QA_KINDS = [['task', 'משימה'], ['chore', 'מטלה חוזרת'], ['shopping', 'קניות'], ['expense', 'הוצאה'], ['habit', 'הרגל']];
+const QA_EXAMPLES = ['הוצאתי 400 שקל על צבע טמבור', 'להשקות עציצים כל יום', 'לקנות חלב, ביצים ולחם', 'לקבוע תור לרופא מחר', 'אלה שילמה 120 על פיצה'];
 const qa = { text: '', kind: null, rec: null, mode: 'type' };
 
 // Two separate ways in, sharing the same preview and save:
@@ -1022,8 +1081,9 @@ function renderQuickAdd() {
     task: [esc(p.title || '…'), `${AREA_LABEL(p.area)}, ${p.due_date ? dueLabel(p.due_date) : 'בלי תאריך'}`],
     chore: [esc(p.title || '…'), `מטלת בית, ${INTERVALS.find(([v]) => v === p.interval_days)?.[1] ?? `כל ${daysHe(p.interval_days)}`}`],
     habit: [esc(p.title || '…'), `הרגל יומי, ${esc(p.area)}`],
+    shopping: [esc(p.title || '…'), `רשימת קניות, ${[...new Set((p.items ?? []).map((i) => i.category))].join(' ו') || 'סופר'}`],
   }[p.kind];
-  const canSave = p.kind === 'expense' ? p.amount != null : !!p.title;
+  const canSave = p.kind === 'expense' ? p.amount != null : p.kind === 'shopping' ? !!p.items?.length : !!p.title;
   out.innerHTML = `
     <div class="qa-kinds">${QA_KINDS.map(([k, label]) => `<button class="${p.kind === k ? 'on' : ''}" data-action="qa-kind" data-kind="${k}">${label}</button>`).join('')}</div>
     <div class="qa-preview">
@@ -1043,16 +1103,27 @@ async function saveQuick() {
   } else if (p.kind === 'chore') {
     const preset = INTERVALS.some(([v]) => v === p.interval_days) ? String(p.interval_days) : 'custom';
     await forms.chore({ title: p.title, preset, custom_days: String(p.interval_days) }, null);
+  } else if (p.kind === 'shopping') {
+    await addShopping(p.items);
   } else {
     await forms.task({ title: p.title, area: p.area, kind: p.kind, due_date: p.due_date ?? '', repeat: '0' }, null);
   }
   closeSheet();
   await refresh();
-  toast({ expense: `נוספה הוצאה ${money(p.amount)}`, chore: 'נוספה מטלת בית חוזרת', task: 'נוספה משימה', habit: 'נוסף הרגל' }[p.kind] + ' ✓');
+  toast({ expense: `נוספה הוצאה ${money(p.amount)}`, chore: 'נוספה מטלת בית חוזרת', task: 'נוספה משימה', habit: 'נוסף הרגל', shopping: 'נוסף לרשימת הקניות' }[p.kind] + ' ✓');
 }
 
 function editQuick() {
   const p = parsedQuick();
+  // Shopping has no form of its own: open the list, with the sentence ready in its add field.
+  if (p.kind === 'shopping') {
+    closeSheet();
+    Object.assign(S, { tab: 'home', homeView: 'shop', room: null });
+    render();
+    const input = document.querySelector('.shop-add input');
+    if (input) { input.value = p.title; input.focus(); }
+    return;
+  }
   if (p.kind === 'expense') return expenseSheet(null, p);
   if (p.kind === 'chore') return choreSheet(null, p);
   return taskSheet(null, p.kind, p.area, '0', p);
@@ -1110,7 +1181,20 @@ const actions = {
   'close-sheet': () => closeSheet(),
   'personal-view': (el) => { S.personalView = el.dataset.view; render(); },
   'exp-view': (el) => { S.expView = el.dataset.view; render(); },
-  room: (el) => { S.room = S.room === el.dataset.room ? null : el.dataset.room; render(); },
+  room: (el) => { S.room = S.room === el.dataset.room ? null : el.dataset.room; S.homeView = 'chores'; render(); },
+  'home-view': (el) => { S.homeView = el.dataset.view; render(); },
+  'edit-shop': (el) => shopSheet(find('shopping', el.dataset.id)),
+  buy: async (el) => {
+    const i = find('shopping', el.dataset.id);
+    await celebrate(i.id);
+    await store.update('shopping', i.id, { bought_at: new Date().toISOString(), bought_by: me().id });
+    await refresh();
+    toast(`"${i.title}" נקנה`, () => store.update('shopping', i.id, { bought_at: null, bought_by: null }));
+  },
+  'shop-again': async (el) => {
+    await store.update('shopping', el.dataset.id, { bought_at: null, bought_by: null });
+    await refresh();
+  },
   'set-theme': (el) => {
     theme = el.dataset.theme;
     try { localStorage.setItem('home-app-theme', theme); } catch {}
@@ -1258,8 +1342,16 @@ const forms = {
     else await store.insert('tasks', { ...row, done_at: null, done_by: null });
     if (shared && S.tab !== 'home' && S.tab !== 'today') toast('נוסף ללשונית בית (משותף)');
   },
+  shop: async (f) => {
+    await addShopping(shoppingItems(f.title));
+    await refresh();
+    document.querySelector('.shop-add input')?.focus(); // ready for the next item
+  },
+  'shop-edit': async (f, id) => {
+    await store.update('shopping', id, { title: f.title.trim(), category: f.category });
+  },
   expense: async (f, id) => {
-    const amount = Number(String(f.amount).replace(/[^\d.,]/g, '').replace(',', '.'));
+    const amount =Number(String(f.amount).replace(/[^\d.,]/g, '').replace(',', '.'));
     if (!amount || amount <= 0) throw new Error('סכום לא תקין');
     const row = { amount: Math.round(amount * 100) / 100, description: f.description.trim(), category: f.category, paid_by: f.paid_by, spent_on: f.spent_on };
     if (id) await store.update('expenses', id, row);
@@ -1417,7 +1509,7 @@ document.addEventListener('submit', async (e) => {
     const data = Object.fromEntries(fd);
     if (fd.has('days')) data.days = fd.getAll('days'); // several checkboxes share the name
     await forms[name](data, form.dataset.id || null);
-    if (['chore', 'task', 'expense'].includes(name)) { closeSheet(); await refresh(); }
+    if (['chore', 'task', 'expense', 'shop-edit'].includes(name)) { closeSheet(); await refresh(); }
   } catch (err) {
     toast('שגיאה: ' + err.message);
   } finally {
