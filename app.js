@@ -107,14 +107,57 @@ let theme = 'auto';
 try { theme = localStorage.getItem('home-app-theme') || 'auto'; } catch {}
 applyTheme(theme);
 
+const WEEKDAY_NAMES = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+const WEEKDAY_LETTERS = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳', 'ש׳'];
+const daysList = (days) => (days.length <= 2 ? days.map((d) => WEEKDAY_NAMES[d]).join(' או ') : days.map((d) => WEEKDAY_LETTERS[d]).join(', '));
+// The weekdays a chore is limited to, or null for any day.
+const choreDays = (c) => (c.days?.length && c.days.length < 7 ? c.days : null);
+
+/* A chore limited to some weekdays ("every week, Friday or Saturday") is due on one of its days when it wasn't
+   done yet in this run of its days, and enough time passed since last time: the interval, less up to the six days
+   a run can span. Done on Friday, it waits for next weekend; skipped altogether, it's late the next time round.
+   Mirrored in supabase/functions/notify. */
+function choreDueOn(c, days, day) {
+  if (!days.includes(parseDate(day).getDay())) return false;
+  if (!c.last_done_at) return true;
+  const done = localDate(new Date(c.last_done_at));
+  let start = day;
+  for (let i = 1; i < Math.min(c.interval_days, 7); i++) {
+    const prev = addDays(day, -i);
+    if (!days.includes(parseDate(prev).getDay())) break;
+    start = prev;
+  }
+  return done < start && dayDiff(parseDate(done), parseDate(day)) >= c.interval_days - 6;
+}
+
 function choreStatus(c) {
-  if (!c.last_done_at) return { remaining: 0, ratio: 1.01, level: 'due', pill: 'עוד לא בוצע', sub: `כל ${daysHe(c.interval_days)}` };
-  const since = dayDiff(new Date(c.last_done_at), new Date());
-  const remaining = c.interval_days - since;
-  const ratio = since / c.interval_days;
-  const level = remaining < 0 ? 'late' : remaining === 0 ? 'due' : ratio >= 0.6 ? 'soon' : 'ok';
-  const pill = remaining < 0 ? `באיחור ${daysHe(remaining)}` : remaining === 0 ? 'להיום' : remaining === 1 ? 'מחר' : `בעוד ${daysHe(remaining)}`;
-  return { remaining, ratio, level, pill, sub: `<span class="who-line">${whoChip(c.last_done_by)}${esc(memberName(c.last_done_by))}</span><span>${agoHe(since)}</span>` };
+  const days = choreDays(c);
+  const every = `${INTERVALS.find(([v]) => v === c.interval_days)?.[1] ?? `כל ${daysHe(c.interval_days)}`}${days ? `, ${daysList(days)}` : ''}`;
+  if (!days) {
+    if (!c.last_done_at) return { remaining: 0, ratio: 1.01, level: 'due', pill: 'עוד לא בוצע', sub: every };
+    const since = dayDiff(new Date(c.last_done_at), new Date());
+    const remaining = c.interval_days - since;
+    const ratio = since / c.interval_days;
+    const level = remaining < 0 ? 'late' : remaining === 0 ? 'due' : ratio >= 0.6 ? 'soon' : 'ok';
+    const pill = remaining < 0 ? `באיחור ${daysHe(remaining)}` : remaining === 0 ? 'להיום' : remaining === 1 ? 'מחר' : `בעוד ${daysHe(remaining)}`;
+    return { remaining, ratio, level, pill, sub: `<span class="who-line">${whoChip(c.last_done_by)}${esc(memberName(c.last_done_by))}</span><span>${agoHe(since)}</span>` };
+  }
+  // Days until it's next due (0: today).
+  let ahead = 0;
+  while (ahead < 60 && !choreDueOn(c, days, addDays(today(), ahead))) ahead++;
+  const since = c.last_done_at ? dayDiff(new Date(c.last_done_at), new Date()) : null;
+  const remaining = ahead || (since !== null && since > c.interval_days ? c.interval_days - since : 0);
+  const ratio = remaining <= 0 ? 1.01 - remaining / 100 : 1 - remaining / (c.interval_days + 7);
+  const level = remaining < 0 ? 'late' : remaining === 0 ? 'due' : remaining === 1 ? 'soon' : 'ok';
+  const pill = remaining < 0 ? `באיחור ${daysHe(remaining)}`
+    : remaining === 0 ? (c.last_done_at ? 'להיום' : 'עוד לא בוצע')
+    : remaining === 1 ? 'מחר'
+    : remaining < 7 ? `ביום ${WEEKDAY_NAMES[parseDate(addDays(today(), remaining)).getDay()]}`
+    : `בעוד ${daysHe(remaining)}`;
+  const sub = c.last_done_at
+    ? `<span class="who-line">${whoChip(c.last_done_by)}${esc(memberName(c.last_done_by))}</span><span>${agoHe(since)}</span><span>${daysList(days)}</span>`
+    : every;
+  return { remaining, ratio, level, pill, sub };
 }
 
 function dueLabel(due) {
@@ -722,6 +765,47 @@ function closeSheet() {
   setTimeout(() => { if (!sheetRoot.classList.contains('open')) sheetRoot.innerHTML = ''; }, 250);
 }
 
+// Pull a sheet down to close it: by its top bar, or from anywhere once it's scrolled to the top.
+// Let go past a quarter of its height (or flick it) and it closes; otherwise it springs back.
+let pull = null;
+sheetRoot.addEventListener('touchstart', (e) => {
+  const sheet = e.target.closest('.sheet');
+  if (!sheet || e.touches.length > 1 || e.target.closest('textarea, input:not([type="checkbox"]):not([type="radio"])')) return;
+  pull = { sheet, y: e.touches[0].clientY, t: Date.now(), dy: 0, on: false, head: !!e.target.closest('.sheet-head') };
+}, { passive: true });
+
+sheetRoot.addEventListener('touchmove', (e) => {
+  if (!pull) return;
+  const dy = e.touches[0].clientY - pull.y;
+  if (!pull.on) {
+    if (dy < -6 || (!pull.head && pull.sheet.scrollTop > 0)) { pull = null; return; } // scrolling the sheet
+    if (dy < 6) return;
+    pull.on = true;
+    pull.sheet.style.transition = 'none';
+  }
+  e.preventDefault();
+  pull.dy = Math.max(0, dy);
+  pull.sheet.style.transform = `translateY(${pull.dy}px)`;
+  sheetRoot.querySelector('.sheet-backdrop').style.opacity = String(1 - pull.dy / pull.sheet.offsetHeight);
+}, { passive: false });
+
+function endPull() {
+  if (!pull) return;
+  const { sheet, dy, t, on } = pull;
+  pull = null;
+  if (!on) return;
+  sheet.style.transition = '';
+  sheetRoot.querySelector('.sheet-backdrop').style.opacity = '';
+  if (dy > sheet.offsetHeight / 4 || (dy > 40 && dy / (Date.now() - t) > .6)) {
+    sheet.style.transform = 'translateY(100%)';
+    closeSheet();
+  } else {
+    sheet.style.transform = '';
+  }
+}
+sheetRoot.addEventListener('touchend', endPull);
+sheetRoot.addEventListener('touchcancel', endPull);
+
 const chips = (name, options, selected) => `<div class="chips">${options.map(([value, label]) => `
   <label class="chip"><input type="radio" name="${name}" value="${esc(value)}" ${String(value) === String(selected) ? 'checked' : ''}><span>${label}</span></label>`).join('')}</div>`;
 
@@ -736,6 +820,9 @@ function choreSheet(c, draft = null) {
       <label class="field-label">באיזו תדירות?</label>
       ${chips('preset', [...INTERVALS, ['custom', 'אחר']], preset)}
       <div class="inline">כל <input name="custom_days" type="number" min="1" max="365" inputmode="numeric" value="${interval}" class="num"> ימים <small class="muted">(כשבוחרים "אחר")</small></div>
+      <label class="field-label">באילו ימים? <small class="muted">לא חובה</small></label>
+      <div class="chips days">${WEEKDAY_LETTERS.map((d, i) => `<label class="chip"><input type="checkbox" name="days" value="${i}" ${v.days?.includes(i) ? 'checked' : ''}><span>${d}</span></label>`).join('')}</div>
+      <small class="muted">למשל "כל שבוע" עם ו׳ ו-ש׳: המטלה תחכה לכם בסופ"ש, ואחרי שעשיתם אותה באחד מהימים היא תחזור רק בסופ"ש הבא.</small>
       <label class="field-label">באיזה חדר?</label>
       ${chips('room', [['', 'לפי השם'], ...CELLS.map((r) => [r.id, r.name])], c?.room ?? S.room ?? '')}
       <button class="btn primary" type="submit">${c ? 'שמירה' : 'הוספה'}</button>
@@ -813,7 +900,7 @@ function expenseSheet(e, draft = null) {
     </form>`);
 }
 
-const APP_VERSION = 14; // shown in settings, to tell which version a phone is running
+const APP_VERSION = 15; // shown in settings, to tell which version a phone is running
 
 /* Notifications: the phone subscribes here; a Supabase function sends them (supabase/functions/notify). */
 const canPush = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
@@ -1147,7 +1234,8 @@ const forms = {
   chore: async (f, id) => {
     const interval_days = f.preset === 'custom' ? Number(f.custom_days) : Number(f.preset);
     if (!interval_days || interval_days < 1) throw new Error('תדירות לא תקינה');
-    const row = { title: f.title.trim(), interval_days, room: f.room || null };
+    const days = (f.days ?? []).map(Number).sort((a, b) => a - b);
+    const row = { title: f.title.trim(), interval_days, room: f.room || null, days: days.length && days.length < 7 ? days : null };
     if (id) await store.update('chores', id, row);
     else await store.insert('chores', { ...row, last_done_at: null, last_done_by: null });
   },
@@ -1325,7 +1413,10 @@ document.addEventListener('submit', async (e) => {
   btn.disabled = true;
   try {
     const name = form.dataset.form;
-    await forms[name](Object.fromEntries(new FormData(form)), form.dataset.id || null);
+    const fd = new FormData(form);
+    const data = Object.fromEntries(fd);
+    if (fd.has('days')) data.days = fd.getAll('days'); // several checkboxes share the name
+    await forms[name](data, form.dataset.id || null);
     if (['chore', 'task', 'expense'].includes(name)) { closeSheet(); await refresh(); }
   } catch (err) {
     toast('שגיאה: ' + err.message);

@@ -34,6 +34,24 @@ function local(d = new Date()) {
   return { day: `${parts.year}-${parts.month}-${parts.day}`, minutes: Number(parts.hour) * 60 + Number(parts.minute) };
 }
 const daysBetween = (a: string, b: string) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
+const shift = (day: string, n: number) => new Date(Date.parse(day) + n * 86400000).toISOString().slice(0, 10);
+const weekday = (day: string) => new Date(day + 'T00:00:00Z').getUTCDay();
+
+// Same rule as choreStatus/choreDueOn in app.js, including chores limited to some weekdays.
+function choreDue(c: any, day: string) {
+  const done = c.last_done_at ? local(new Date(c.last_done_at)).day : null;
+  const days: number[] | null = c.days?.length && c.days.length < 7 ? c.days : null;
+  if (!days) return !done || c.interval_days - daysBetween(done, day) <= 0;
+  if (!days.includes(weekday(day))) return false;
+  if (!done) return true;
+  let start = day;
+  for (let i = 1; i < Math.min(c.interval_days, 7); i++) {
+    const prev = shift(day, -i);
+    if (!days.includes(weekday(prev))) break;
+    start = prev;
+  }
+  return done < start && daysBetween(done, day) >= c.interval_days - 6;
+}
 
 async function send(userIds: string[], payload: { title: string; body: string; tab?: string }) {
   if (!userIds.length) return 0;
@@ -82,7 +100,7 @@ async function tick() {
   const households = [...new Set(people.map((p) => p.household_id).filter(Boolean))];
   if (!households.length) return 0;
   const [chores, tasks, checks] = await Promise.all([
-    sb.from('chores').select('title, interval_days, last_done_at, household_id').in('household_id', households).then(ok),
+    sb.from('chores').select('title, interval_days, days, last_done_at, household_id').in('household_id', households).then(ok),
     sb.from('tasks').select('id, user_id, household_id, kind, title, due_date, done_at').or(`user_id.in.(${subUsers}),household_id.in.(${households})`).then(ok),
     sb.from('habit_checks').select('task_id').eq('day', day).in('user_id', subUsers).then(ok),
   ]) as any[][];
@@ -92,7 +110,7 @@ async function tick() {
   for (const p of people) {
     if (!p.household_id) continue;
     // The same lists the Today screen shows.
-    const dueChores = chores.filter((c) => c.household_id === p.household_id && (!c.last_done_at || c.interval_days - daysBetween(local(new Date(c.last_done_at)).day, day) <= 0));
+    const dueChores = chores.filter((c) => c.household_id === p.household_id && choreDue(c, day));
     const dueTasks = tasks.filter((t) => t.kind === 'task' && !t.done_at && t.due_date && t.due_date <= day && (t.household_id ? t.household_id === p.household_id : t.user_id === p.id));
     const habits = tasks.filter((t) => t.kind === 'habit' && t.user_id === p.id);
     const unchecked = habits.filter((h) => !checked.has(h.id));

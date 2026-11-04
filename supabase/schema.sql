@@ -22,6 +22,7 @@ create table public.chores (
   title text not null,
   interval_days int not null check (interval_days between 1 and 365),
   room text,
+  days smallint[], -- weekdays it may be done on (0 = Sunday); null = any day
   last_done_at timestamptz,
   last_done_by uuid references public.profiles on delete set null,
   created_at timestamptz not null default now()

@@ -318,7 +318,7 @@ input, textarea { font: inherit; color: inherit; }
 .choice span { font-size: 14px; }
 
 .stack { display: flex; flex-direction: column; gap: 10px; }
-.stack input:not([type="radio"]), .quick input {
+.stack input:not([type="radio"]):not([type="checkbox"]), .quick input {
   width: 100%; padding: 13px 14px; border-radius: 14px; border: 1.5px solid var(--line);
   background: var(--sheet); font-size: 16px; outline: none; transition: border-color .15s;
 }
@@ -332,6 +332,8 @@ input, textarea { font: inherit; color: inherit; }
 }
 .chip input:checked + span { background: var(--lamp); border-color: var(--lamp-edge); color: var(--on-lamp); }
 .chip input:focus-visible + span { outline: 2px solid var(--ink); outline-offset: 2px; }
+.chips.days { gap: 6px; }
+.chips.days .chip span { width: 40px; padding: 8px 0; text-align: center; }
 .quick { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .quick input { flex: 1; min-width: 150px; }
 .inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
