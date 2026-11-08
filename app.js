@@ -959,7 +959,7 @@ function expenseSheet(e, draft = null) {
     </form>`);
 }
 
-const APP_VERSION = 16; // shown in settings, to tell which version a phone is running
+const APP_VERSION = 17; // shown in settings, to tell which version a phone is running
 
 /* Notifications: the phone subscribes here; a Supabase function sends them (supabase/functions/notify). */
 const canPush = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
@@ -1251,13 +1251,32 @@ const actions = {
     await refresh();
     if (!t.done_at) toast(`"${t.title}" בוצע`, () => store.update('tasks', t.id, undone));
   },
+  // The dot changes right away and the save follows; a second tap while it's saving is ignored,
+  // so a quick double tap can't check the same day twice.
   'toggle-habit': async (el) => {
     const { id, day } = el.dataset;
-    const existing = S.data.habit_checks.find((c) => c.task_id === id && c.day === day);
-    if (!existing) await celebrate(id);
-    if (existing) await store.remove('habit_checks', existing.id);
-    else await store.insert('habit_checks', { task_id: id, day });
-    await refresh();
+    const key = id + day;
+    if (habitSaving.has(key)) return;
+    habitSaving.add(key);
+    try {
+      const existing = S.data.habit_checks.filter((c) => c.task_id === id && c.day === day);
+      if (existing.length) {
+        S.data.habit_checks = S.data.habit_checks.filter((c) => !existing.includes(c));
+        render();
+        for (const c of existing) await store.remove('habit_checks', c.id);
+      } else {
+        await celebrate(id);
+        const check = { task_id: id, day };
+        S.data.habit_checks.push(check);
+        render();
+        Object.assign(check, await store.insert('habit_checks', { task_id: id, day }));
+      }
+    } catch (err) {
+      await refresh();
+      throw err;
+    } finally {
+      habitSaving.delete(key);
+    }
   },
   'set-date': (el) => {
     el.closest('form').querySelector('[name="due_date"]').value = el.dataset.value;
@@ -1370,6 +1389,8 @@ const forms = {
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // The checkbox fills and its tick draws itself, then the row settles — only then does the data update.
+const habitSaving = new Set();
+
 async function celebrate(id) {
   const row = document.querySelector(`.swipe[data-id="${id}"] .row`);
   if (!row || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
