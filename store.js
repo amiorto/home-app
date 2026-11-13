@@ -211,7 +211,8 @@ async function createCloudStore() {
       if (PERSONAL_TABLES.includes(table)) full.user_id ??= ctx.user.id;
       return ok(await sb.from(table).insert(full).select().single());
     },
-    async update(table, id, patch) { return ok(await sb.from(table).update(patch).eq('id', id).select().single()); },
+    // maybeSingle: a row the partner deleted meanwhile just isn't there any more, not an error.
+    async update(table, id, patch) { return ok(await sb.from(table).update(patch).eq('id', id).select().maybeSingle()); },
     async remove(table, id) { ok(await sb.from(table).delete().eq('id', id)); },
     async updateProfile(patch) { ok(await sb.from('profiles').update(patch).eq('id', ctx.user.id)); },
     async savePush({ endpoint, keys }) { ok(await sb.rpc('save_push', { p_endpoint: endpoint, p_p256dh: keys.p256dh, p_auth: keys.auth })); },

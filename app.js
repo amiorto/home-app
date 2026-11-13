@@ -208,9 +208,14 @@ async function reloadSession() {
   if (S.ctx.household && canPush && Notification.permission === 'granted') subscribePush().catch(() => {});
 }
 
+// Reloads can overlap (your own change, the partner's, coming back to the app); only the latest one is drawn.
+let loads = 0;
 async function refresh() {
   if (!S.ctx?.household) return;
-  S.data = await store.loadAll();
+  const n = ++loads;
+  const data = await store.loadAll();
+  if (n !== loads) return;
+  S.data = data;
   render();
 }
 
@@ -226,6 +231,9 @@ function render() {
   // The signed-in person's colour (swipe background, recording mic).
   document.body.classList.remove('who-a', 'who-b');
   document.body.classList.add(whoClass(me().id));
+  // A redraw (say, the partner added something) shouldn't wipe what's being typed into the list's add field.
+  const typing = document.activeElement?.closest('.shop-add') && document.activeElement;
+  const typed = typing && { value: typing.value, start: typing.selectionStart };
   app.innerHTML = `
     ${{ today: () => houseScene(dateLine), home: homeScene, personal: plantScene, expenses: expenseScene }[tab.id]()}
     ${store.mode === 'demo' ? `<div class="demo-bar"><span>מצב הדגמה. מחובר/ת כ<b>${esc(me().name)}</b></span><button data-action="switch-user">החלפה</button></div>` : ''}
@@ -236,6 +244,12 @@ function render() {
       ${TABS.slice(2).map(tabBtn).join('')}
     </nav>
     <button class="voice-fab" data-action="voice" aria-label="הוספה בהקלטה">${icon('mic')}</button>`;
+  const input = typed && document.querySelector('.shop-add input');
+  if (input) {
+    input.value = typed.value;
+    input.focus({ preventScroll: true });
+    input.setSelectionRange(typed.start, typed.start);
+  }
   fitScene();
   if (tab.id === 'expenses') animateExpenses();
   else S.anim = null;
@@ -567,8 +581,10 @@ function viewShopping() {
 
 // Adds items by name; one bought before comes back instead of piling up a duplicate.
 async function addShopping(items) {
+  const listed = new Set(toBuy().map((i) => i.title));
   for (const { title, category } of items) {
-    if (toBuy().some((i) => i.title === title)) continue;
+    if (listed.has(title)) continue; // already on the list, or twice in one sentence
+    listed.add(title);
     const old = S.data.shopping.find((i) => i.title === title);
     if (old) await store.update('shopping', old.id, { bought_at: null, bought_by: null });
     else await store.insert('shopping', { title, category, bought_at: null, bought_by: null });
@@ -959,7 +975,7 @@ function expenseSheet(e, draft = null) {
     </form>`);
 }
 
-const APP_VERSION = 17; // shown in settings, to tell which version a phone is running
+const APP_VERSION = 18; // shown in settings, to tell which version a phone is running
 
 /* Notifications: the phone subscribes here; a Supabase function sends them (supabase/functions/notify). */
 const canPush = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
@@ -1174,6 +1190,8 @@ function toast(msg, undo) {
 /* ---------------- actions ---------------- */
 
 const find = (table, id) => S.data[table].find((r) => r.id === id);
+// Opens a row's form; a row deleted on the other phone just reloads the list instead.
+const openRow = (sheet, table, el) => { const r = find(table, el.dataset.id); return r ? sheet(r) : refresh(); };
 
 const actions = {
   tab: (el) => { S.tab = el.dataset.tab; try { localStorage.setItem('home-app-tab', S.tab); } catch {} render(); window.scrollTo(0, 0); },
@@ -1183,9 +1201,10 @@ const actions = {
   'exp-view': (el) => { S.expView = el.dataset.view; render(); },
   room: (el) => { S.room = S.room === el.dataset.room ? null : el.dataset.room; S.homeView = 'chores'; render(); },
   'home-view': (el) => { S.homeView = el.dataset.view; render(); },
-  'edit-shop': (el) => shopSheet(find('shopping', el.dataset.id)),
+  'edit-shop': (el) => openRow(shopSheet, 'shopping', el),
   buy: async (el) => {
     const i = find('shopping', el.dataset.id);
+    if (!i) return refresh(); // already gone (the partner deleted it)
     await celebrate(i.id);
     await store.update('shopping', i.id, { bought_at: new Date().toISOString(), bought_by: me().id });
     await refresh();
@@ -1225,11 +1244,12 @@ const actions = {
     qa.kind = null;
     renderQuickAdd();
   },
-  'edit-chore': (el) => choreSheet(find('chores', el.dataset.id)),
-  'edit-task': (el) => taskSheet(find('tasks', el.dataset.id)),
-  'edit-expense': (el) => expenseSheet(find('expenses', el.dataset.id)),
+  'edit-chore': (el) => openRow(choreSheet, 'chores', el),
+  'edit-task': (el) => openRow(taskSheet, 'tasks', el),
+  'edit-expense': (el) => openRow(expenseSheet, 'expenses', el),
   'done-chore': async (el) => {
     const c = find('chores', el.dataset.id);
+    if (!c) return refresh();
     const prev = { last_done_at: c.last_done_at, last_done_by: c.last_done_by };
     await celebrate(c.id);
     const now = new Date().toISOString();
@@ -1244,6 +1264,7 @@ const actions = {
   },
   'toggle-task': async (el) => {
     const t = find('tasks', el.dataset.id);
+    if (!t) return refresh();
     const undone = { done_at: null, done_by: null };
     if (!t.done_at) await celebrate(t.id);
     await store.update('tasks', t.id, t.done_at ? undone : { done_at: new Date().toISOString(), done_by: me().id });
@@ -1251,31 +1272,27 @@ const actions = {
     await refresh();
     if (!t.done_at) toast(`"${t.title}" בוצע`, () => store.update('tasks', t.id, undone));
   },
-  // The dot changes right away and the save follows; a second tap while it's saving is ignored,
-  // so a quick double tap can't check the same day twice.
+  // The dot changes right away and the save follows (a reload already on its way would undo it, so it's dropped).
   'toggle-habit': async (el) => {
     const { id, day } = el.dataset;
-    const key = id + day;
-    if (habitSaving.has(key)) return;
-    habitSaving.add(key);
     try {
       const existing = S.data.habit_checks.filter((c) => c.task_id === id && c.day === day);
       if (existing.length) {
         S.data.habit_checks = S.data.habit_checks.filter((c) => !existing.includes(c));
+        loads++;
         render();
         for (const c of existing) await store.remove('habit_checks', c.id);
       } else {
         await celebrate(id);
         const check = { task_id: id, day };
         S.data.habit_checks.push(check);
+        loads++;
         render();
         Object.assign(check, await store.insert('habit_checks', { task_id: id, day }));
       }
     } catch (err) {
       await refresh();
       throw err;
-    } finally {
-      habitSaving.delete(key);
     }
   },
   'set-date': (el) => {
@@ -1296,6 +1313,7 @@ const actions = {
     const { table, id } = el.closest('.swipe').dataset;
     closeSwipe();
     const row = find(table, id);
+    if (!row) return refresh();
     // Deleting takes its history along, so undo has to bring that back too.
     const [kidTable, kidKey] = table === 'chores' ? ['chore_log', 'chore_id'] : ['habit_checks', 'task_id'];
     const kids = S.data[kidTable].filter((k) => k[kidKey] === id);
@@ -1370,7 +1388,8 @@ const forms = {
     await store.update('shopping', id, { title: f.title.trim(), category: f.category });
   },
   expense: async (f, id) => {
-    const amount =Number(String(f.amount).replace(/[^\d.,]/g, '').replace(',', '.'));
+    // "1,250" and "1,250.50": the comma groups thousands; "12,5": it's the decimal point.
+    const amount = Number(String(f.amount).replace(/[^\d.,]/g, '').replace(/,(?=\d{3}(\D|$))/g, '').replace(',', '.'));
     if (!amount || amount <= 0) throw new Error('סכום לא תקין');
     const row = { amount: Math.round(amount * 100) / 100, description: f.description.trim(), category: f.category, paid_by: f.paid_by, spent_on: f.spent_on };
     if (id) await store.update('expenses', id, row);
@@ -1388,9 +1407,9 @@ const forms = {
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// The checkbox fills and its tick draws itself, then the row settles — only then does the data update.
-const habitSaving = new Set();
+const running = new Set();
 
+// The checkbox fills and its tick draws itself, then the row settles — only then does the data update.
 async function celebrate(id) {
   const row = document.querySelector(`.swipe[data-id="${id}"] .row`);
   if (!row || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
@@ -1481,7 +1500,11 @@ document.addEventListener('click', async (e) => {
   const fn = actions[el.dataset.action];
   if (!fn) return;
   e.preventDefault();
-  try { await fn(el); } catch (err) { toast('שגיאה: ' + err.message); }
+  // While an action is still saving, tapping it again does nothing, so a double tap can't do it twice.
+  const key = [el.dataset.action, el.dataset.id, el.dataset.day].join('|');
+  if (running.has(key)) return;
+  running.add(key);
+  try { await fn(el); } catch (err) { toast('שגיאה: ' + err.message); } finally { running.delete(key); }
 });
 
 document.addEventListener('keydown', (e) => {
