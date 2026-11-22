@@ -1252,7 +1252,7 @@ function expenseSheet(e, draft = null) {
     </form>`);
 }
 
-const APP_VERSION = 19; // shown in settings, to tell which version a phone is running
+const APP_VERSION = 20; // shown in settings, to tell which version a phone is running
 
 /* Notifications: the phone subscribes here; a Supabase function sends them (supabase/functions/notify). */
 const canPush = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
