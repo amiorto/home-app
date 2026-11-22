@@ -5,8 +5,9 @@ alter table public.profiles
   add column if not exists notify_morning boolean not null default true,
   add column if not exists notify_due boolean not null default true,
   add column if not exists notify_habits boolean not null default true,
-  add column if not exists notify_partner boolean not null default true;
-grant update (notify_morning, notify_due, notify_habits, notify_partner) on public.profiles to authenticated;
+  add column if not exists notify_partner boolean not null default true,
+  add column if not exists notify_week boolean not null default true;
+grant update (notify_morning, notify_due, notify_habits, notify_partner, notify_week) on public.profiles to authenticated;
 
 -- One row per phone that agreed to notifications.
 create table if not exists public.push_subscriptions (

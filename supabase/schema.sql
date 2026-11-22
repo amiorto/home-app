@@ -25,6 +25,7 @@ create table public.chores (
   days smallint[], -- weekdays it may be done on (0 = Sunday); null = any day
   last_done_at timestamptz,
   last_done_by uuid references public.profiles on delete set null,
+  next_by uuid references public.profiles on delete set null, -- whose turn it is next time; cleared once done
   created_at timestamptz not null default now()
 );
 
@@ -172,3 +173,23 @@ create policy "household shopping" on public.shopping
 
 -- Live updates between the two phones
 alter publication supabase_realtime add table public.shopping;
+
+-- Thank-yous between the two of you. `item` says what for: 'chore_log:<id>' or 'tasks:<id>'.
+create table if not exists public.thanks (
+  id uuid primary key default gen_random_uuid(),
+  household_id uuid not null references public.households on delete cascade,
+  from_id uuid not null default auth.uid() references public.profiles on delete cascade,
+  to_id uuid not null references public.profiles on delete cascade,
+  item text not null,
+  title text not null,
+  created_at timestamptz not null default now(),
+  unique (from_id, item)
+);
+create index if not exists thanks_household on public.thanks (household_id);
+
+alter table public.thanks enable row level security;
+create policy "household thanks" on public.thanks
+  for all using (household_id = public.my_household())
+  with check (household_id = public.my_household() and from_id = auth.uid());
+
+alter publication supabase_realtime add table public.thanks;

@@ -4,7 +4,7 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 
 // Tables shared by the household vs. private to each user.
-export const SHARED_TABLES = ['chores', 'chore_log', 'expenses', 'shopping'];
+export const SHARED_TABLES = ['chores', 'chore_log', 'expenses', 'shopping', 'thanks'];
 export const PERSONAL_TABLES = ['tasks', 'habit_checks'];
 
 export function uid() {
@@ -84,6 +84,8 @@ function seedDemo() {
       exp(64, 'נורות ומטאטא', 'כללי', partner, d(9)),
     ],
     shopping: demoShopping(hh, me, partner, iso, day),
+    // Ella already thanked me for taking the trash out.
+    thanks: [{ id: uid(), household_id: hh.id, from_id: partner.id, to_id: me.id, item: `chore_log:${chore_log.find((l) => l.chore_id === chores[2].id).id}`, title: chores[2].title, created_at: iso(day / 2) }],
   };
 }
 
@@ -104,6 +106,7 @@ function createDemoStore() {
   try { db = JSON.parse(localStorage.getItem(DEMO_KEY)); } catch { db = null; }
   if (!db) db = seedDemo();
   db.shopping ??= demoShopping(db.household, db.profiles[0], db.profiles[1], (ms) => new Date(Date.now() - ms).toISOString(), 86400000); // saved before shopping existed
+  db.thanks ??= [];
   const save =() => { try { localStorage.setItem(DEMO_KEY, JSON.stringify(db)); } catch {} };
   save();
   const listeners = new Set();
@@ -192,7 +195,7 @@ async function createCloudStore() {
     async loadAll() {
       const since = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
       const boughtSince = new Date(Date.now() - 60 * 86400000).toISOString();
-      const [chores, chore_log, expenses, tasks, habit_checks, shopping] = await Promise.all([
+      const [chores, chore_log, expenses, tasks, habit_checks, shopping, thanks] = await Promise.all([
         sb.from('chores').select('*').order('created_at').then(ok),
         sb.from('chore_log').select('*').order('done_at', { ascending: false }).limit(300).then(ok),
         sb.from('expenses').select('*').order('spent_on', { ascending: false }).then(ok),
@@ -201,9 +204,10 @@ async function createCloudStore() {
         sb.from('habit_checks').select('*').eq('user_id', ctx.user.id).gte('day', since).then(ok),
         // Everything still to buy, plus the last two months of bought things for "bought lately".
         sb.from('shopping').select('*').or(`bought_at.is.null,bought_at.gte.${boughtSince}`).order('created_at').then(ok),
+        sb.from('thanks').select('*').gte('created_at', boughtSince).then(ok),
       ]);
       for (const e of expenses) e.amount = Number(e.amount);
-      return { chores, chore_log, expenses, tasks, habit_checks, shopping };
+      return { chores, chore_log, expenses, tasks, habit_checks, shopping, thanks };
     },
     async insert(table, row) {
       const full = { ...row };
@@ -217,7 +221,7 @@ async function createCloudStore() {
     async updateProfile(patch) { ok(await sb.from('profiles').update(patch).eq('id', ctx.user.id)); },
     async savePush({ endpoint, keys }) { ok(await sb.rpc('save_push', { p_endpoint: endpoint, p_p256dh: keys.p256dh, p_auth: keys.auth })); },
     // Tells the housemates' phones; a failure here shouldn't get in the way of what was just done.
-    notify(text) { sb.functions.invoke('notify', { body: { kind: 'partner', text } }).catch(() => {}); },
+    notify(text) { sb.functions.invoke('notify', { body: { kind: 'partner', text, tab: 'today' } }).catch(() => {}); },
     subscribe(fn) {
       if (!ctx?.household) return () => {};
       if (channel) sb.removeChannel(channel);

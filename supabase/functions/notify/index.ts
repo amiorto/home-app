@@ -1,5 +1,6 @@
 // Sends the app's notifications. Two ways in:
-//   {"kind":"tick"}                     – every 15 minutes from pg_cron: morning summary, what's still due, habits
+//   {"kind":"tick"}                     – every 15 minutes from pg_cron: morning summary, what's still due, habits,
+//                                         and on Saturday night the week recap
 //   {"kind":"partner","text":"..."}     – from the app, with the user's token: tells their housemates what they did
 // Deploy with "Verify JWT" off; partner calls check the token themselves.
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
@@ -10,7 +11,7 @@ webpush.setVapidDetails('https://amiorto.github.io/home-app/', Deno.env.get('VAP
 
 const ZONE = 'Asia/Jerusalem';
 // Each daily notification goes out once, the first tick inside its hours (minutes since midnight).
-const WINDOWS = { morning: [8 * 60, 11 * 60], due: [18 * 60, 21 * 60], habits: [20 * 60 + 30, 23 * 60] } as const;
+const WINDOWS = { morning: [8 * 60, 11 * 60], due: [18 * 60, 21 * 60], habits: [20 * 60 + 30, 23 * 60], week: [20 * 60, 22 * 60 + 30] } as const;
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 
@@ -18,7 +19,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   const body = await req.json().catch(() => ({}));
   try {
-    const sent = body.kind === 'partner' ? await partner(req, String(body.text ?? '')) : await tick();
+    const sent = body.kind === 'partner' ? await partner(req, String(body.text ?? ''), body.tab) : await tick();
     return Response.json({ sent }, { headers: cors });
   } catch (e) {
     return Response.json({ error: String(e?.message ?? e) }, { status: 400, headers: cors });
@@ -69,14 +70,14 @@ async function send(userIds: string[], payload: { title: string; body: string; t
   return n;
 }
 
-async function partner(req: Request, text: string) {
+async function partner(req: Request, text: string, tab?: string) {
   const token = req.headers.get('Authorization')?.replace('Bearer ', '') ?? '';
   const { data: { user } } = await sb.auth.getUser(token);
   if (!user) throw new Error('not signed in');
   const me = ok(await sb.from('profiles').select('household_id').eq('id', user.id).single()) as any;
   if (!me?.household_id || !text.trim()) return 0;
   const others = ok(await sb.from('profiles').select('id').eq('household_id', me.household_id).eq('notify_partner', true).neq('id', user.id)) as any[];
-  return send(others.map((p) => p.id), { title: 'הבית שלנו', body: text.slice(0, 200) });
+  return send(others.map((p) => p.id), { title: 'הבית שלנו', body: text.slice(0, 200), tab: tab === 'today' ? tab : undefined });
 }
 
 // Marks a daily notification as sent; false if it already was today.
@@ -90,7 +91,7 @@ const list = (titles: string[]) => titles.slice(0, 3).map((t) => `"${t}"`).join(
 
 async function tick() {
   const { day, minutes } = local();
-  const open = (Object.keys(WINDOWS) as (keyof typeof WINDOWS)[]).filter((k) => minutes >= WINDOWS[k][0] && minutes < WINDOWS[k][1]);
+  const open = (Object.keys(WINDOWS) as (keyof typeof WINDOWS)[]).filter((k) => minutes >= WINDOWS[k][0] && minutes < WINDOWS[k][1] && (k !== 'week' || weekday(day) === 6));
   if (!open.length) return 0;
 
   // Only people with a phone signed up for notifications.
@@ -100,17 +101,26 @@ async function tick() {
   const households = [...new Set(people.map((p) => p.household_id).filter(Boolean))];
   if (!households.length) return 0;
   const [chores, tasks, checks] = await Promise.all([
-    sb.from('chores').select('title, interval_days, days, last_done_at, household_id').in('household_id', households).then(ok),
+    sb.from('chores').select('title, interval_days, days, last_done_at, next_by, household_id').in('household_id', households).then(ok),
     sb.from('tasks').select('id, user_id, household_id, kind, title, due_date, done_at').or(`user_id.in.(${subUsers}),household_id.in.(${households})`).then(ok),
     sb.from('habit_checks').select('task_id').eq('day', day).in('user_id', subUsers).then(ok),
   ]) as any[][];
   const checked = new Set(checks.map((c) => c.task_id));
+  // Saturday night: what each household did this week (Sunday to today), for the recap notification.
+  const weekStart = shift(day, -6);
+  const inWeek = (iso: string | null) => !!iso && local(new Date(iso)).day >= weekStart;
+  const log = open.includes('week')
+    ? ok(await sb.from('chore_log').select('household_id, done_at').in('household_id', households).gte('done_at', `${shift(day, -7)}T00:00:00Z`)) as any[]
+    : [];
+  const weekDone = (hh: string) => log.filter((l) => l.household_id === hh && inWeek(l.done_at)).length
+    + tasks.filter((t) => t.household_id === hh && inWeek(t.done_at)).length;
 
   let sent = 0;
   for (const p of people) {
     if (!p.household_id) continue;
     // The same lists the Today screen shows.
-    const dueChores = chores.filter((c) => c.household_id === p.household_id && choreDue(c, day));
+    // A chore that's the other one's turn isn't on my list.
+    const dueChores = chores.filter((c) => c.household_id === p.household_id && (!c.next_by || c.next_by === p.id) && choreDue(c, day));
     const dueTasks = tasks.filter((t) => t.kind === 'task' && !t.done_at && t.due_date && t.due_date <= day && (t.household_id ? t.household_id === p.household_id : t.user_id === p.id));
     const habits = tasks.filter((t) => t.kind === 'habit' && t.user_id === p.id);
     const unchecked = habits.filter((h) => !checked.has(h.id));
@@ -131,6 +141,11 @@ async function tick() {
     if (open.includes('habits') && p.notify_habits && unchecked.length && await claim(p.id, 'habits', day)) {
       const text = unchecked.length === 1 ? `עוד לא סימנת את "${unchecked[0].title}" היום` : `עוד ${unchecked.length} הרגלים לסמן היום, והעציץ מחכה`;
       sent += await send([p.id], { title: 'ההרגלים של היום', body: text, tab: 'personal' });
+    }
+    if (open.includes('week') && p.notify_week !== false && await claim(p.id, 'week', day)) {
+      const n = weekDone(p.household_id);
+      const body = n ? `${count(n, 'דבר אחד', 'דברים')} בבית השבוע. בואו לראות, ולחלק את השבוע הבא` : 'בואו לראות את השבוע, ולחלק את השבוע הבא';
+      sent += await send([p.id], { title: 'השבוע שלנו מוכן', body, tab: 'week' });
     }
   }
   return sent;

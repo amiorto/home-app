@@ -91,6 +91,8 @@ const ICON_PATHS = {
   receipt: '<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/>',
   box: '<path d="M3.5 7.5 12 3l8.5 4.5v9L12 21l-8.5-4.5z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v9"/>',
   cup: '<path d="M5 9h12v4a6 6 0 0 1-12 0z"/><path d="M17 10h1.5a2.5 2.5 0 0 1 0 5H17M8 3c0 1.5 1 1.5 1 3M12 3c0 1.5 1 1.5 1 3"/>',
+  heart: '<path d="M12 20s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.3a4.3 4.3 0 0 1 7.5 2.5C19.5 15.4 12 20 12 20z"/>',
+  close: '<path d="M6 6l12 12M18 6 6 18"/>',
 };
 const icon = (name) => `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_PATHS[name]}</svg>`;
 
@@ -190,7 +192,20 @@ async function boot() {
     return;
   }
   document.addEventListener('visibilitychange', () => { if (!document.hidden && S.data) refresh(); });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+    navigator.serviceWorker.addEventListener('message', (e) => goTo(e.data?.tab));
+  }
+  // A notification tapped while the app was closed opens it at ./#tab.
+  goTo(location.hash.slice(1));
+  if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+}
+
+// Where a notification leads: a tab, or the week recap.
+function goTo(tab) {
+  if (!S.data || !tab) return;
+  if (tab === 'week') return openStory();
+  if (TABS.some((t) => t.id === tab) && S.tab !== tab) actions.tab({ dataset: { tab } });
 }
 
 // Realtime: when the partner changes shared data, reload (debounced).
@@ -471,7 +486,7 @@ function choreRow(c) {
       <button class="box" data-action="done-chore" data-id="${c.id}" aria-label="סמן כבוצע"></button>
       <div class="row-main">
         <div class="row-title">${esc(c.title)}</div>
-        <div class="row-sub">${st.sub}</div>
+        <div class="row-sub">${c.next_by && st.remaining <= 7 ? `<span class="who-line turn">${whoChip(c.next_by)}${c.next_by === me().id ? 'התור שלי' : `התור של ${esc(memberName(c.next_by))}`}</span>` : ''}${st.sub}</div>
       </div>
       <span class="pill">${st.pill}</span>
     </div>`, 'done-chore', c.id, 'chores', 'בוצע');
@@ -538,14 +553,274 @@ function viewToday() {
     .sort(byOpenThenDue);
   const habits = S.data.tasks.filter((t) => t.kind === 'habit');
   const total = monthExpenses(today().slice(0, 7)).reduce((s, e) => s + e.amount, 0);
+  const week = recapWeek();
   return `
+    ${week.fresh && seenWeek() !== week.end ? weekCard(week) : ''}
+    ${thankedCard()}
+    ${thankSection()}
     ${section('בבית, לעשות היום', dueChores.length ? `<div class="list">${dueChores.map(choreRow).join('')}</div>` : empty('הבית מסודר, אין מטלות להיום'), dueChores.length)}
     ${section('משימות להיום', listOrEmpty(tasks.map(taskRow), 'אין משימות להיום'), tasks.filter((t) => !t.done_at).length)}
     ${habits.length ? section('הרגלים', `<div class="list">${habits.map((h) => habitRow(h, true)).join('')}</div>`) : ''}
     <button class="card summary-link" data-action="tab" data-tab="expenses">
       <span>הוצאות משותפות החודש</span><b>${money(total)}</b>
+    </button>
+    <button class="card summary-link week-link" data-action="week">
+      <span>השבוע שלנו<small>${weekRangeLabel(week)}</small></span>${icon('chevron')}
     </button>`;
 }
+
+/* ---------------- thank you ---------------- */
+
+const partnerOf = () => S.ctx.members.find((m) => m.id !== me().id);
+const isoDaysAgo = (n) => new Date(startOfDay(new Date()) - n * DAY).toISOString();
+
+// What the other one did in the last three days (home chores and shared home tasks) that I haven't thanked them for.
+function toThank() {
+  const p = partnerOf();
+  if (!p) return [];
+  const since = isoDaysAgo(2);
+  const thanked = new Set(S.data.thanks.filter((t) => t.from_id === me().id).map((t) => t.item));
+  return [
+    ...S.data.chore_log.filter((l) => l.done_by === p.id && l.done_at >= since)
+      .map((l) => ({ item: `chore_log:${l.id}`, title: S.data.chores.find((c) => c.id === l.chore_id)?.title, at: l.done_at })),
+    ...S.data.tasks.filter((t) => t.household_id && t.done_by === p.id && t.done_at >= since)
+      .map((t) => ({ item: `tasks:${t.id}`, title: t.title, at: t.done_at })),
+  ].filter((x) => x.title && !thanked.has(x.item)).sort((a, b) => b.at.localeCompare(a.at));
+}
+
+function thankSection() {
+  const items = toThank();
+  if (!items.length) return '';
+  const p = partnerOf();
+  const rows = items.slice(0, 4).map((x) => `
+    <div class="row thank-row">
+      <div class="row-main">
+        <div class="row-title">${esc(x.title)}</div>
+        <div class="row-sub"><span class="who-line">${whoChip(p.id)}${esc(p.name)}</span><span>${agoHe(dayDiff(new Date(x.at), new Date()))}</span></div>
+      </div>
+      <button class="heart-btn ${whoClass(p.id)}" data-action="thank" data-id="${esc(x.item)}" aria-label="תודה ל${esc(p.name)} על ${esc(x.title)}">${icon('heart')}<span>תודה</span></button>
+    </div>`).join('');
+  return `
+    <section class="sec">
+      <div class="sec-row"><h2>להגיד תודה</h2>${items.length > 1 ? `<button data-action="thank-all">תודה על הכול</button>` : ''}</div>
+      <div class="list">${rows}</div>
+    </section>`;
+}
+
+// Thank-yous I got in the last two days, until I tap them away.
+let thanksSeen = '';
+try { thanksSeen = localStorage.getItem('home-app-thanks-seen') ?? ''; } catch {}
+function thankedCard() {
+  const got = S.data.thanks.filter((t) => t.to_id === me().id && t.created_at >= isoDaysAgo(1) && t.created_at > thanksSeen)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  if (!got.length) return '';
+  const from = esc(S.ctx.members.find((m) => m.id === got[0].from_id)?.name ?? '');
+  return `
+    <button class="card thanked ${whoClass(got[0].from_id)}" data-action="thanks-seen" data-at="${got[0].created_at}">
+      ${icon('heart')}
+      <span><b>תודה מ${from}</b><small>על "${esc(got[0].title)}"${got.length > 1 ? ` ועוד ${got.length - 1}` : ''}</small></span>
+    </button>`;
+}
+
+async function sendThanks(items, btn) {
+  const p = partnerOf();
+  if (!items.length || !p) return refresh();
+  btn?.classList.add('sent');
+  navigator.vibrate?.(12);
+  if (btn && !matchMedia('(prefers-reduced-motion: reduce)').matches) await wait(420);
+  for (const x of items) await store.insert('thanks', { from_id: me().id, to_id: p.id, item: x.item, title: x.title });
+  store.notify(items.length === 1 ? `${me().name}: תודה על "${items[0].title}" ❤️` : `${me().name}: תודה על ${items.length} דברים שעשית ❤️`);
+  await refresh();
+  toast(`נשלחה תודה ל${p.name}`);
+}
+
+/* ---------------- the week: a recap every Saturday night ---------------- */
+
+// Weeks run Sunday to Saturday. From Saturday 17:00 it's this week's recap; before that, last week's.
+// It's "fresh" (a card at the top of Today) from Saturday evening through Monday.
+function recapWeek() {
+  const now = new Date();
+  const back = now.getDay() === 6 && now.getHours() >= 17 ? 0 : (now.getDay() + 1) % 7 || 7;
+  const end = addDays(today(), -back);
+  return { start: addDays(end, -6), end, fresh: back <= 2 };
+}
+
+function weekRangeLabel({ start, end }) {
+  const [a, b] = [parseDate(start), parseDate(end)];
+  const long = (d) => d.toLocaleDateString('he-IL', { day: 'numeric', month: 'long' });
+  return a.getMonth() === b.getMonth() ? `${a.getDate()} עד ${long(b)}` : `${long(a)} עד ${long(b)}`;
+}
+
+let weekSeen = '';
+try { weekSeen = localStorage.getItem('home-app-week-seen') ?? ''; } catch {}
+const seenWeek = () => weekSeen;
+
+function weekCard(week) {
+  return `
+    <button class="week-card" data-action="week">
+      <img src="images/house-on.jpg" alt="">
+      <span><b>השבוע שלנו מוכן</b><small>${weekRangeLabel(week)}. מה עשיתם, ומי לוקח מה בשבוע הבא</small></span>
+    </button>`;
+}
+
+function weekStats({ start, end }) {
+  const inWeek = (iso, from = start, to = end) => { const d = localDate(new Date(iso)); return d >= from && d <= to; };
+  const members = S.ctx.members;
+  // Home: chores and shared home tasks done, per person, and against the week before.
+  const home = (from, to) => [
+    ...S.data.chore_log.filter((l) => inWeek(l.done_at, from, to)).map((l) => ({ by: l.done_by, chore: l.chore_id })),
+    ...S.data.tasks.filter((t) => t.household_id && t.done_at && inWeek(t.done_at, from, to)).map((t) => ({ by: t.done_by })),
+  ];
+  const done = home(start, end);
+  const before = home(addDays(start, -7), addDays(end, -7)).length;
+  const perChore = {};
+  for (const d of done) if (d.chore) perChore[d.chore] = (perChore[d.chore] ?? 0) + 1;
+  const [topId, topN] = Object.entries(perChore).sort((a, b) => b[1] - a[1])[0] ?? [];
+  const thanks = S.data.thanks.filter((t) => inWeek(t.created_at));
+  // Money: this week's shared spending, and where the month stands.
+  const spent = S.data.expenses.filter((e) => e.spent_on >= start && e.spent_on <= end);
+  const byCat = {};
+  for (const e of spent) byCat[e.category] = (byCat[e.category] ?? 0) + e.amount;
+  const month = S.data.expenses.filter((e) => e.spent_on.startsWith(end.slice(0, 7)));
+  const paid = Object.fromEntries(members.map((m) => [m.id, month.filter((e) => e.paid_by === m.id).reduce((s, e) => s + e.amount, 0)]));
+  const monthTotal = month.reduce((s, e) => s + e.amount, 0);
+  // Mine only (this phone): habit days and private tasks.
+  const habits = S.data.tasks.filter((t) => t.kind === 'habit');
+  const habitDays = new Set(S.data.habit_checks.filter((c) => c.day >= start && c.day <= end).map((c) => c.day)).size;
+  const myTasks = S.data.tasks.filter((t) => t.kind === 'task' && !t.household_id && t.done_at && inWeek(t.done_at)).length;
+  return {
+    done, before, by: Object.fromEntries(members.map((m) => [m.id, done.filter((d) => d.by === m.id).length])),
+    top: topId && topN > 1 ? { title: S.data.chores.find((c) => c.id === topId)?.title, n: topN } : null,
+    thanks, spent: spent.reduce((s, e) => s + e.amount, 0), spentCount: spent.length,
+    topCat: Object.entries(byCat).sort((a, b) => b[1] - a[1])[0]?.[0],
+    paid, monthTotal, habits: habits.length, habitDays, myTasks,
+  };
+}
+
+// The bigger chores coming up in the next week (not the daily ones), for "who takes what".
+const upcomingChores = () => S.data.chores
+  .map((c) => ({ c, st: choreStatus(c) }))
+  .filter(({ c, st }) => c.interval_days >= 3 && st.remaining <= 7)
+  .sort((a, b) => a.st.remaining - b.st.remaining);
+
+function storySlides(week) {
+  const s = weekStats(week);
+  const members = S.ctx.members;
+  const pair = members.length === 2;
+  const total = s.done.length;
+  const slides = [];
+  const counted = (n, one, many) => (n === 1 ? one : `${n} ${many}`);
+
+  slides.push({ bg: total ? 'images/house-on.jpg' : 'images/house-off.jpg', html: `
+    <p class="story-kicker">${weekRangeLabel(week)}</p>
+    <h2 class="story-title">השבוע שלנו</h2>
+    <p class="story-line">${total ? `${counted(total, 'דבר אחד', 'דברים')} בבית${s.thanks.length ? ` ו${counted(s.thanks.length, 'תודה אחת', 'תודות')}` : ''}` : 'שבוע שקט בבית'}</p>
+    <p class="story-hint">לחצו כדי להמשיך</p>` });
+
+  const diff = total - s.before;
+  const max = Math.max(1, ...Object.values(s.by));
+  slides.push({ bg: 'images/rooms-on.jpg', html: `
+    <p class="story-kicker">בבית</p>
+    <div class="story-num">${total}</div>
+    <p class="story-line">${!s.before && !total ? 'עוד לא סומן כלום השבוע' : diff > 0 ? `${diff} יותר מהשבוע שעבר` : diff < 0 ? `${-diff} פחות מהשבוע שעבר` : 'כמו בשבוע שעבר'}</p>
+    ${pair ? `<div class="story-bars-by">${members.map((m, i) => `
+      <div class="${i ? 'who-b' : 'who-a'}"><span>${esc(m.name)}</span><i style="--w:${(s.by[m.id] / max) * 100}%"></i><b>${s.by[m.id]}</b></div>`).join('')}</div>` : ''}
+    ${s.top ? `<p class="story-note">הכי הרבה: "${esc(s.top.title)}", ${s.top.n} פעמים</p>` : ''}` });
+
+  const to = (id) => s.thanks.filter((t) => t.to_id === id).length;
+  slides.push({ bg: null, html: `
+    <p class="story-kicker">תודות</p>
+    <div class="story-heart">${icon('heart')}<span>${s.thanks.length}</span></div>
+    ${s.thanks.length
+      ? `${pair ? `<p class="story-line">${members.map((m) => { const o = members.find((x) => x.id !== m.id); return `${esc(o.name)} ל${esc(m.name)}: ${to(m.id)}`; }).join('<br>')}</p>` : ''}
+         <p class="story-note">${s.thanks.slice(-3).reverse().map((t) => `"${esc(t.title)}"`).join(', ')}</p>`
+      : `<p class="story-line">השבוע לא נשלחו תודות</p><p class="story-note">בשבוע הבא: לב אחד על כל דבר שהשני עשה, ישר מהמסך "היום"</p>`}` });
+
+  const debt = pair ? (s.paid[members[0].id] - s.paid[members[1].id]) / 2 : 0;
+  const lean = pair && s.monthTotal ? (s.paid[members[0].id] - s.paid[members[1].id]) / s.monthTotal : 0;
+  const [payer, payee] = debt > 0 ? [members[1], members[0]] : [members[0], members[1]];
+  slides.push({ bg: `images/scale-${scalePose(lean)}.jpg`, html: `
+    <p class="story-kicker">הוצאות משותפות</p>
+    <div class="story-num money">${money(s.spent)}</div>
+    <p class="story-line">${s.spentCount ? `${counted(s.spentCount, 'הוצאה אחת', 'הוצאות')} השבוע${s.topCat ? `, הכי הרבה על ${esc(s.topCat)}` : ''}` : 'השבוע בלי הוצאות משותפות'}</p>
+    ${pair && s.monthTotal ? `<p class="story-note">${Math.abs(debt) < 0.5 ? 'החודש מאוזן עד עכשיו' : `כדי להתאזן החודש: ${money(Math.abs(debt))} מ${esc(payer.name)} ל${esc(payee.name)}`}</p>` : ''}` });
+
+  if (s.habits || s.myTasks) {
+    const { stage } = plantProgress();
+    slides.push({ bg: `images/plant-${stage}.jpg`, html: `
+      <p class="story-kicker">שלך, רק בטלפון הזה</p>
+      ${s.habits ? `<div class="story-num">${s.habitDays}<small>/7</small></div><p class="story-line">ימים עם הרגלים</p>` : ''}
+      ${s.myTasks ? `<p class="story-note">ועוד ${counted(s.myTasks, 'משימה אישית אחת', 'משימות אישיות')} שסגרת</p>` : ''}` });
+  }
+
+  slides.push({ bg: null, plan: true, html: planSlide() });
+  return slides;
+}
+
+// The last slide: split the bigger chores of the coming week. Tapping a name makes it their turn (tap again to clear).
+function planSlide() {
+  const list = upcomingChores();
+  const members = S.ctx.members;
+  return `
+    <p class="story-kicker">השבוע הבא</p>
+    <h2 class="story-title small">מי לוקח מה?</h2>
+    ${list.length ? `<div class="plan">${list.map(({ c, st }) => `
+      <div class="plan-row">
+        <div><b>${esc(c.title)}</b><small>${st.pill}</small></div>
+        <div class="plan-who">${members.map((m, i) => `<button class="${i ? 'who-b' : 'who-a'} ${c.next_by === m.id ? 'on' : ''}" data-action="assign" data-id="${c.id}" data-who="${m.id}" aria-pressed="${c.next_by === m.id}">${esc(m.id === me().id ? 'אני' : m.name)}</button>`).join('')}</div>
+      </div>`).join('')}</div>` : '<p class="story-line">אין מטלות גדולות בשבוע הבא</p>'}
+    <button class="btn primary story-done" data-action="story-close">סיימנו</button>`;
+}
+
+// The story is its own layer over the app; live updates redraw the app under it without touching it.
+const story = { i: 0, slides: null, week: null };
+const storyRoot = document.createElement('div');
+storyRoot.id = 'story-root';
+document.body.append(storyRoot);
+
+function openStory() {
+  if (!S.data) return;
+  story.week = recapWeek();
+  story.slides = storySlides(story.week);
+  story.i = 0;
+  weekSeen = story.week.end;
+  try { localStorage.setItem('home-app-week-seen', weekSeen); } catch {}
+  document.documentElement.classList.add('story-open');
+  drawStory();
+}
+
+function drawStory() {
+  const slide = story.slides[story.i];
+  storyRoot.innerHTML = `
+    <div class="story ${slide.bg ? 'has-photo' : ''} ${slide.plan ? 'is-plan' : ''}" role="dialog" aria-modal="true" aria-label="השבוע שלנו">
+      ${slide.bg ? `<img class="story-bg" src="${slide.bg}" alt="">` : ''}
+      <div class="story-progress">${story.slides.map((_, i) => `<i class="${i <= story.i ? 'on' : ''}"></i>`).join('')}</div>
+      <button class="story-x" data-action="story-close" aria-label="סגירה">${icon('close')}</button>
+      <div class="story-body">${slide.html}</div>
+    </div>`;
+}
+
+function closeStory() {
+  storyRoot.innerHTML = '';
+  document.documentElement.classList.remove('story-open');
+  render();
+}
+
+// A tap moves on; a tap near the right edge (where Hebrew reading starts) goes back.
+storyRoot.addEventListener('click', (e) => {
+  if (e.target.closest('[data-action], button')) return;
+  const back = e.clientX > innerWidth * .72;
+  const next = story.i + (back ? -1 : 1);
+  if (next < 0 || next >= story.slides.length) return;
+  story.i = next;
+  drawStory();
+});
+document.addEventListener('keydown', (e) => {
+  if (!storyRoot.innerHTML) return;
+  if (e.key === 'Escape') closeStory();
+  const step = e.key === 'ArrowLeft' ? 1 : e.key === 'ArrowRight' ? -1 : 0;
+  if (step && story.slides[story.i + step]) { story.i += step; drawStory(); }
+});
 
 /* The shopping list, shared by the household. Ticking an item off moves it to "bought lately", where a tap puts it back. */
 const SHOP_CATEGORIES = ['סופר', 'כללי'];
@@ -900,6 +1175,8 @@ function choreSheet(c, draft = null) {
       <small class="muted">למשל "כל שבוע" עם ו׳ ו-ש׳: המטלה תחכה לכם בסופ"ש, ואחרי שעשיתם אותה באחד מהימים היא תחזור רק בסופ"ש הבא.</small>
       <label class="field-label">באיזה חדר?</label>
       ${chips('room', [['', 'לפי השם'], ...CELLS.map((r) => [r.id, r.name])], c?.room ?? S.room ?? '')}
+      ${S.ctx.members.length === 2 ? `<label class="field-label">של מי התור הבא? <small class="muted">לא חובה</small></label>
+      ${chips('next_by', [['', 'לא נקבע'], ...S.ctx.members.map((m) => [m.id, m.id === me().id ? 'שלי' : esc(m.name)])], c?.next_by ?? '')}` : ''}
       <button class="btn primary" type="submit">${c ? 'שמירה' : 'הוספה'}</button>
       ${c ? `<button class="btn danger" type="button" data-action="delete" data-table="chores" data-id="${c.id}">מחיקת מטלה</button>` : ''}
     </form>`);
@@ -975,7 +1252,7 @@ function expenseSheet(e, draft = null) {
     </form>`);
 }
 
-const APP_VERSION = 18; // shown in settings, to tell which version a phone is running
+const APP_VERSION = 19; // shown in settings, to tell which version a phone is running
 
 /* Notifications: the phone subscribes here; a Supabase function sends them (supabase/functions/notify). */
 const canPush = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
@@ -983,7 +1260,8 @@ const NOTIFY_PREFS = [
   ['notify_morning', 'סיכום בוקר, ב-8:00'],
   ['notify_due', 'מה שעוד מחכה להיום, ב-18:00'],
   ['notify_habits', 'תזכורת להרגלים, ב-20:30'],
-  ['notify_partner', 'עדכונים מהבית: מטלות שבוצעו והוצאות חדשות'],
+  ['notify_partner', 'עדכונים מהבית: מטלות שבוצעו, הוצאות חדשות ותודות'],
+  ['notify_week', 'השבוע שלנו, במוצאי שבת ב-20:00'],
 ];
 
 async function subscribePush() {
@@ -1214,6 +1492,23 @@ const actions = {
     await store.update('shopping', el.dataset.id, { bought_at: null, bought_by: null });
     await refresh();
   },
+  thank: (el) => sendThanks(toThank().filter((x) => x.item === el.dataset.id), el),
+  'thank-all': () => sendThanks(toThank()),
+  'thanks-seen': (el) => {
+    thanksSeen = el.dataset.at;
+    try { localStorage.setItem('home-app-thanks-seen', thanksSeen); } catch {}
+    render();
+  },
+  week: () => openStory(),
+  'story-close': () => closeStory(),
+  assign: async (el) => {
+    const c = find('chores', el.dataset.id);
+    if (!c) return;
+    c.next_by = c.next_by === el.dataset.who ? null : el.dataset.who;
+    story.slides.at(-1).html = planSlide();
+    drawStory();
+    await store.update('chores', c.id, { next_by: c.next_by });
+  },
   'set-theme': (el) => {
     theme = el.dataset.theme;
     try { localStorage.setItem('home-app-theme', theme); } catch {}
@@ -1250,10 +1545,10 @@ const actions = {
   'done-chore': async (el) => {
     const c = find('chores', el.dataset.id);
     if (!c) return refresh();
-    const prev = { last_done_at: c.last_done_at, last_done_by: c.last_done_by };
+    const prev = { last_done_at: c.last_done_at, last_done_by: c.last_done_by, next_by: c.next_by ?? null };
     await celebrate(c.id);
     const now = new Date().toISOString();
-    await store.update('chores', c.id, { last_done_at: now, last_done_by: me().id });
+    await store.update('chores', c.id, { last_done_at: now, last_done_by: me().id, next_by: null });
     const log = await store.insert('chore_log', { chore_id: c.id, done_by: me().id, done_at: now });
     store.notify(`${me().name}: בוצע "${c.title}"`);
     await refresh();
@@ -1356,7 +1651,7 @@ const forms = {
     const interval_days = f.preset === 'custom' ? Number(f.custom_days) : Number(f.preset);
     if (!interval_days || interval_days < 1) throw new Error('תדירות לא תקינה');
     const days = (f.days ?? []).map(Number).sort((a, b) => a - b);
-    const row = { title: f.title.trim(), interval_days, room: f.room || null, days: days.length && days.length < 7 ? days : null };
+    const row = { title: f.title.trim(), interval_days, room: f.room || null, next_by: f.next_by || null, days: days.length && days.length < 7 ? days : null };
     if (id) await store.update('chores', id, row);
     else await store.insert('chores', { ...row, last_done_at: null, last_done_by: null });
   },
